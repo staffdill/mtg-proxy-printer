@@ -23,9 +23,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: input folder not found: {input_dir}", file=sys.stderr)
         return 1
 
-    cfg = GeometryConfig(bleed_mm=args.bleed, gap_mm=args.gap)
     manifest = Path(args.manifest) if args.manifest else None
     try:
+        cfg = GeometryConfig(bleed_mm=args.bleed, gap_mm=args.gap)
         card_paths = resolve_card_list(input_dir, manifest)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
