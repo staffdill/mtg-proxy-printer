@@ -7,6 +7,7 @@
    measured from the top-left of the sheet). Design Space uses inches — use the inch values.
 4. Select all four, **Group**, and **Save** the project as "MTG 4-up template".
 
+```
 Cricut Design Space — 4-up cut template
 Sheet: 215.9 x 279.4 mm (8.5 x 11.0 in) (US Letter), 300 DPI
 Each cut: rounded rectangle 63 x 88 mm (2.480 x 3.465 in), radius 3 mm (0.118 in)
@@ -17,6 +18,7 @@ Card 1: x=40.95 mm (1.612 in), y=47.70 mm (1.878 in)
 Card 2: x=111.95 mm (4.407 in), y=47.70 mm (1.878 in)
 Card 3: x=40.95 mm (1.612 in), y=143.70 mm (5.657 in)
 Card 4: x=111.95 mm (4.407 in), y=143.70 mm (5.657 in)
+```
 
 ## Per-sheet cycle
 1. Open the saved template.
