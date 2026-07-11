@@ -1,6 +1,11 @@
 from PIL import Image
 
-from mtgproxy.geometry import GeometryConfig, card_boxes, sheet_size_px
+from mtgproxy.geometry import (
+    GeometryConfig,
+    card_boxes,
+    content_bbox_px,
+    sheet_size_px,
+)
 
 
 def resize_cover(img: Image.Image, w_px: int, h_px: int) -> Image.Image:
@@ -15,9 +20,13 @@ def resize_cover(img: Image.Image, w_px: int, h_px: int) -> Image.Image:
     return scaled.crop((left, top, left + w_px, top + h_px))
 
 
-def composite_sheet(images: list[Image.Image], cfg: GeometryConfig) -> Image.Image:
+def composite_sheet(
+    images: list[Image.Image], cfg: GeometryConfig, crop: bool = False
+) -> Image.Image:
     canvas = Image.new("RGB", sheet_size_px(cfg), "white")
     for img, box in zip(images, card_boxes(cfg)):
         placed = resize_cover(img.convert("RGB"), box.print_w_px, box.print_h_px)
         canvas.paste(placed, (box.print_x_px, box.print_y_px))
+    if crop:
+        canvas = canvas.crop(content_bbox_px(cfg))
     return canvas

@@ -6,13 +6,15 @@ from mtgproxy.geometry import GeometryConfig
 from mtgproxy.layout import composite_sheet
 
 
-def build_sheets(card_paths: list[Path], cfg: GeometryConfig) -> list[Image.Image]:
+def build_sheets(
+    card_paths: list[Path], cfg: GeometryConfig, crop: bool = False
+) -> list[Image.Image]:
     n = cfg.cards_per_sheet
     sheets: list[Image.Image] = []
     for start in range(0, len(card_paths), n):
         chunk = card_paths[start : start + n]
         images = [Image.open(p) for p in chunk]
-        sheets.append(composite_sheet(images, cfg))
+        sheets.append(composite_sheet(images, cfg, crop=crop))
     return sheets
 
 

@@ -1,5 +1,11 @@
 from PIL import Image
-from mtgproxy.geometry import GeometryConfig, sheet_size_px, card_boxes
+from mtgproxy.geometry import (
+    GeometryConfig,
+    card_boxes,
+    content_bbox_px,
+    content_size_mm,
+    sheet_size_px,
+)
 from mtgproxy.layout import resize_cover, composite_sheet
 
 
@@ -30,3 +36,19 @@ def test_composite_partial_sheet_ok():
     # only card 0 filled; card 3 region stays white
     box3 = card_boxes(cfg)[3]
     assert sheet.getpixel((box3.print_x_px + 10, box3.print_y_px + 10)) == (255, 255, 255)
+
+
+def test_composite_crop_trims_to_card_block():
+    cfg = GeometryConfig()
+    imgs = [Image.new("RGB", (100, 140), "red") for _ in range(4)]
+    sheet = composite_sheet(imgs, cfg, crop=True)
+
+    left, top, right, bottom = content_bbox_px(cfg)
+    assert sheet.size == (right - left, bottom - top)
+    # cropped size matches content_size_mm at the config DPI (within 1px rounding)
+    w_mm, h_mm = content_size_mm(cfg)
+    ppm = cfg.px_per_mm()
+    assert abs(sheet.width - round(w_mm * ppm)) <= 1
+    assert abs(sheet.height - round(h_mm * ppm)) <= 1
+    # top-left corner is now printed card art (outer card's bleed), not white margin
+    assert sheet.getpixel((2, 2)) == (255, 0, 0)

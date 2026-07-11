@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from mtgproxy.batch import build_sheets, save_sheets
-from mtgproxy.geometry import GeometryConfig
+from mtgproxy.geometry import MM_PER_INCH, GeometryConfig, content_size_mm
 from mtgproxy.sources import resolve_card_list
 
 
@@ -16,6 +16,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", default=None, help="Optional filename,quantity manifest.")
     parser.add_argument("--bleed", type=float, default=3.0, help="Bleed mm per side.")
     parser.add_argument("--gap", type=float, default=8.0, help="Gap mm between cards.")
+    parser.add_argument(
+        "--full-sheet",
+        action="store_true",
+        help="Output the full 8.5x11 page instead of cropping to the card block. "
+        "The cropped default is what fits Cricut Print Then Cut.",
+    )
     args = parser.parse_args(argv)
 
     input_dir = Path(args.input)
@@ -30,10 +36,18 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    sheets = build_sheets(card_paths, cfg)
+    crop = not args.full_sheet
+    sheets = build_sheets(card_paths, cfg, crop=crop)
     written = save_sheets(sheets, Path(args.out), dpi=cfg.dpi)
 
     print(f"Wrote {len(written)} sheet(s) from {len(card_paths)} card(s) to {args.out}")
+    if crop:
+        w_mm, h_mm = content_size_mm(cfg)
+        print(
+            f"In Design Space, set each imported sheet to "
+            f"{w_mm / MM_PER_INCH:.3f} x {h_mm / MM_PER_INCH:.3f} in "
+            f"({w_mm:.0f} x {h_mm:.0f} mm) - Design Space ignores the file's DPI."
+        )
     return 0
 
 

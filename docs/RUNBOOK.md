@@ -12,8 +12,13 @@
    `python -m mtgproxy.cli --input "<mpc-autofill-image-folder>" --out ./out`
    - Optional exact quantities/order: add `--manifest order.txt`
      (lines `filename.png,quantity`).
-3. For each `out/sheet_NN.png`: in Design Space open the template, upload the sheet as
-   Print Then Cut, send behind the cut grid, Make It → Print Then Cut.
+   - Sheets are cropped to the card block (~5.512 × 7.480 in) so they fit Print Then Cut.
+     The CLI prints the exact import size to use; add `--full-sheet` only if you want the
+     old full 8.5×11 page.
+3. For each `out/sheet_NN.png`: in Design Space open the template, upload the sheet as a
+   Print Then Cut image, **set its size to 5.512 × 7.480 in** (Design Space ignores the
+   file's DPI), align it under the cut grid, Make It → Print Then Cut.
+   (See DESIGN_SPACE_TEMPLATE.md for exact positions.)
 4. Print at **100% / actual size**, matte paper, Best quality; let ink dry flat 2-3 min.
 5. Cut. Remove by peeling the **mat away from the card** (flip mat face-down, roll back).
 6. Sleeve each proxy with a real card/land behind it (opaque-back sleeves).

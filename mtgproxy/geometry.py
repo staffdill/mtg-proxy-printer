@@ -73,3 +73,31 @@ def card_boxes(cfg: GeometryConfig) -> list[CardBox]:
                 )
             )
     return boxes
+
+
+def content_bbox_px(cfg: GeometryConfig) -> tuple[int, int, int, int]:
+    """Pixel bounding box (left, top, right, bottom) of the union of all print
+    boxes — the card block with bleed, excluding the surrounding page margin."""
+    boxes = card_boxes(cfg)
+    left = min(b.print_x_px for b in boxes)
+    top = min(b.print_y_px for b in boxes)
+    right = max(b.print_x_px + b.print_w_px for b in boxes)
+    bottom = max(b.print_y_px + b.print_h_px for b in boxes)
+    return (left, top, right, bottom)
+
+
+def content_size_mm(cfg: GeometryConfig) -> tuple[float, float]:
+    """Width/height in mm of the card block with bleed (the cropped sheet size).
+    This is the exact size the image must be set to in Cricut Design Space."""
+    w = cfg.cols * cfg.card_w_mm + (cfg.cols - 1) * cfg.gap_mm + 2 * cfg.bleed_mm
+    h = cfg.rows * cfg.card_h_mm + (cfg.rows - 1) * cfg.gap_mm + 2 * cfg.bleed_mm
+    return (w, h)
+
+
+def card_offsets_content_mm(cfg: GeometryConfig) -> list[tuple[float, float]]:
+    """Top-left of each card's trim box in mm, measured from the top-left of the
+    cropped (content) image — the offsets for placing Design Space cut rectangles."""
+    boxes = card_boxes(cfg)
+    origin_x = min(b.trim_x_mm for b in boxes) - cfg.bleed_mm
+    origin_y = min(b.trim_y_mm for b in boxes) - cfg.bleed_mm
+    return [(b.trim_x_mm - origin_x, b.trim_y_mm - origin_y) for b in boxes]
