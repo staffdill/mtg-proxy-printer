@@ -1,4 +1,3 @@
-import pytest
 from mtgproxy.sources import list_card_images, read_manifest, resolve_card_list
 
 

@@ -20,6 +20,11 @@ def test_card_boxes_count_and_order():
     assert boxes[2].trim_x_mm == pytest.approx(boxes[0].trim_x_mm)
 
 
+def test_gap_smaller_than_double_bleed_raises():
+    with pytest.raises(ValueError):
+        GeometryConfig(bleed_mm=5.0, gap_mm=8.0)  # 8 < 2*5
+
+
 def test_card0_geometry_values():
     box = card_boxes(GeometryConfig())[0]
     # centered content: left=(215.9-134)/2=40.95mm, top=(279.4-184)/2=47.7mm

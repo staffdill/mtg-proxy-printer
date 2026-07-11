@@ -16,14 +16,12 @@ def build_sheets(card_paths: list[Path], cfg: GeometryConfig) -> list[Image.Imag
     return sheets
 
 
-def save_sheets(
-    sheets: list[Image.Image], out_dir: Path, prefix: str = "sheet"
-) -> list[Path]:
+def save_sheets(sheets: list[Image.Image], out_dir: Path, dpi=300, prefix="sheet") -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     width = len(str(len(sheets)))
     written: list[Path] = []
     for i, sheet in enumerate(sheets, start=1):
         path = out_dir / f"{prefix}_{str(i).zfill(width)}.png"
-        sheet.save(path, "PNG", dpi=(sheets[0].info.get("dpi", (300, 300)))[0:2] or (300, 300))
+        sheet.save(path, "PNG", dpi=(dpi, dpi))
         written.append(path)
     return written

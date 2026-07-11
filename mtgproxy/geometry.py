@@ -16,6 +16,13 @@ class GeometryConfig:
     sheet_h_mm: float = 279.4  # US Letter 11 in
     dpi: int = 300
 
+    def __post_init__(self):
+        if self.gap_mm < 2 * self.bleed_mm:
+            raise ValueError(
+                f"gap_mm ({self.gap_mm}) must be >= 2*bleed_mm ({2 * self.bleed_mm}) "
+                "so adjacent card bleed does not overlap"
+            )
+
     @property
     def cards_per_sheet(self) -> int:
         return self.cols * self.rows
