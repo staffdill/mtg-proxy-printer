@@ -3,7 +3,12 @@ import sys
 from pathlib import Path
 
 from mtgproxy.batch import build_sheets, save_sheets
-from mtgproxy.geometry import MM_PER_INCH, GeometryConfig, content_size_mm
+from mtgproxy.geometry import (
+    MM_PER_INCH,
+    GeometryConfig,
+    content_size_mm,
+    trim_content_size_mm,
+)
 from mtgproxy.sources import resolve_card_list
 
 
@@ -22,6 +27,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Output the full 8.5x11 page instead of cropping to the card block. "
         "The cropped default is what fits Cricut Print Then Cut.",
     )
+    parser.add_argument(
+        "--sticker",
+        action="store_true",
+        help="Output transparent sheets with rounded cards so Design Space "
+        "auto-creates the cut lines (no manual cut template needed).",
+    )
     args = parser.parse_args(argv)
 
     input_dir = Path(args.input)
@@ -37,11 +48,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     crop = not args.full_sheet
-    sheets = build_sheets(card_paths, cfg, crop=crop)
+    sheets = build_sheets(card_paths, cfg, crop=crop, sticker=args.sticker)
     written = save_sheets(sheets, Path(args.out), dpi=cfg.dpi)
 
     print(f"Wrote {len(written)} sheet(s) from {len(card_paths)} card(s) to {args.out}")
-    if crop:
+    if args.sticker:
+        w_mm, h_mm = trim_content_size_mm(cfg)
+        print(
+            f"Sticker mode: upload as a Print Then Cut image (Design Space makes the "
+            f"cut lines). Set each sheet to {w_mm / MM_PER_INCH:.3f} x "
+            f"{h_mm / MM_PER_INCH:.3f} in ({w_mm:.0f} x {h_mm:.0f} mm)."
+        )
+    elif crop:
         w_mm, h_mm = content_size_mm(cfg)
         print(
             f"In Design Space, set each imported sheet to "

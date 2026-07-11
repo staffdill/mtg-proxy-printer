@@ -94,6 +94,27 @@ def content_size_mm(cfg: GeometryConfig) -> tuple[float, float]:
     return (w, h)
 
 
+def trim_bbox_px(cfg: GeometryConfig) -> tuple[int, int, int, int]:
+    """Pixel bounding box (left, top, right, bottom) of the union of card TRIM
+    boxes (no bleed) — used for sticker/auto-cut sheets where the card edge is
+    the printed edge."""
+    ppm = cfg.px_per_mm()
+    boxes = card_boxes(cfg)
+    left = min(round(b.trim_x_mm * ppm) for b in boxes)
+    top = min(round(b.trim_y_mm * ppm) for b in boxes)
+    right = max(round((b.trim_x_mm + cfg.card_w_mm) * ppm) for b in boxes)
+    bottom = max(round((b.trim_y_mm + cfg.card_h_mm) * ppm) for b in boxes)
+    return (left, top, right, bottom)
+
+
+def trim_content_size_mm(cfg: GeometryConfig) -> tuple[float, float]:
+    """Width/height in mm of the card block measured to the card edges (no bleed).
+    This is the size a sticker/auto-cut sheet must be set to in Design Space."""
+    w = cfg.cols * cfg.card_w_mm + (cfg.cols - 1) * cfg.gap_mm
+    h = cfg.rows * cfg.card_h_mm + (cfg.rows - 1) * cfg.gap_mm
+    return (w, h)
+
+
 def card_offsets_content_mm(cfg: GeometryConfig) -> list[tuple[float, float]]:
     """Top-left of each card's trim box in mm, measured from the top-left of the
     cropped (content) image — the offsets for placing Design Space cut rectangles."""

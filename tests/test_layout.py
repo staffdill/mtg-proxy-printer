@@ -6,7 +6,12 @@ from mtgproxy.geometry import (
     content_size_mm,
     sheet_size_px,
 )
-from mtgproxy.layout import resize_cover, composite_sheet
+from mtgproxy.geometry import trim_bbox_px
+from mtgproxy.layout import (
+    resize_cover,
+    composite_sheet,
+    composite_sticker_sheet,
+)
 
 
 def test_resize_cover_exact_size_no_distortion():
@@ -52,3 +57,22 @@ def test_composite_crop_trims_to_card_block():
     assert abs(sheet.height - round(h_mm * ppm)) <= 1
     # top-left corner is now printed card art (outer card's bleed), not white margin
     assert sheet.getpixel((2, 2)) == (255, 0, 0)
+
+
+def test_sticker_sheet_transparent_with_rounded_cards():
+    cfg = GeometryConfig()
+    imgs = [Image.new("RGB", (100, 140), "red") for _ in range(4)]
+    sheet = composite_sticker_sheet(imgs, cfg)
+
+    # RGBA, cropped to the card-block (trim) bounds
+    assert sheet.mode == "RGBA"
+    left, top, right, bottom = trim_bbox_px(cfg)
+    assert sheet.size == (right - left, bottom - top)
+
+    # the very corner of card 1 is rounded away -> transparent
+    assert sheet.getpixel((0, 0))[3] == 0
+    # a point well inside card 1 is opaque red
+    ppm = cfg.px_per_mm()
+    inside = (round(20 * ppm), round(30 * ppm))  # 20mm,30mm into the first card
+    px = sheet.getpixel(inside)
+    assert px[3] == 255 and px[:3] == (255, 0, 0)

@@ -1,10 +1,11 @@
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from mtgproxy.geometry import (
     GeometryConfig,
     card_boxes,
     content_bbox_px,
     sheet_size_px,
+    trim_bbox_px,
 )
 
 
@@ -30,3 +31,33 @@ def composite_sheet(
     if crop:
         canvas = canvas.crop(content_bbox_px(cfg))
     return canvas
+
+
+def rounded_card(img: Image.Image, cfg: GeometryConfig) -> Image.Image:
+    """A single card sized to trim (63x88mm) with rounded corners cut out as
+    transparency — an RGBA 'sticker' Design Space can auto-cut around."""
+    ppm = cfg.px_per_mm()
+    w = round(cfg.card_w_mm * ppm)
+    h = round(cfg.card_h_mm * ppm)
+    radius = round(cfg.corner_radius_mm * ppm)
+    card = resize_cover(img.convert("RGB"), w, h).convert("RGBA")
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
+    card.putalpha(mask)
+    return card
+
+
+def composite_sticker_sheet(
+    images: list[Image.Image], cfg: GeometryConfig
+) -> Image.Image:
+    """Transparent-background sheet of rounded cards, cropped to the card block.
+    Design Space treats each card as a sticker and creates the cut lines itself,
+    so no separate cut template is needed."""
+    ppm = cfg.px_per_mm()
+    canvas = Image.new("RGBA", sheet_size_px(cfg), (255, 255, 255, 0))
+    for img, box in zip(images, card_boxes(cfg)):
+        card = rounded_card(img, cfg)
+        canvas.alpha_composite(
+            card, (round(box.trim_x_mm * ppm), round(box.trim_y_mm * ppm))
+        )
+    return canvas.crop(trim_bbox_px(cfg))
