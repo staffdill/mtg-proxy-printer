@@ -178,8 +178,17 @@ def ensure_bleed(screen: Screen, timeout: float) -> None:
     screen.require("53_bleed_on.png", timeout=timeout)
 
 
+#: How long the human gets to print, cut, and come back before the script gives up.
+HANDOVER_TIMEOUT = 900.0
+
+
 def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int) -> None:
-    """Stop. Everything past this point spends physical material."""
+    """Stop and hand the mouse over. Everything past here spends physical material.
+
+    Waits on the SCREEN rather than on stdin: the script has no terminal to read
+    while it is driving the pointer, and tying the handover to a keypress would
+    mean it could not run unattended between sheets.
+    """
     # Design Space enumerates printers slowly and shows "No printers found" first;
     # Print goes green only once one is actually selected.
     screen.require(step.template, timeout=step.timeout)
@@ -187,14 +196,35 @@ def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int) -> Non
 
     print(
         f"\n  >>> {sheet.name} ({index}/{total}) is at the Print Setup dialog.\n"
-        f"  >>> Letter, Add Bleed ON, printer ready. Check the preview, then:\n"
-        f"  >>>   1. click Print yourself\n"
+        f"  >>> Letter, Add Bleed ON, printer ready.\n"
+        f"  >>> OVER TO YOU:\n"
+        f"  >>>   1. check the preview, then click Print\n"
         f"  >>>   2. let the ink dry flat 2-3 min\n"
         f"  >>>   3. run the Cricut (Set Base Material, load the mat, press Go)\n"
         f"  >>>   4. bring Design Space back to the Canvas tab\n"
-        f"  >>> then press Enter here for the next sheet."
+        f"  >>> I'll pick up automatically when the canvas comes back.\n"
     )
-    input()
+
+    # The dialog closing is the human acting on it — printing or cancelling.
+    deadline = time.time() + HANDOVER_TIMEOUT
+    while screen.find(step.template, timeout=1.0) is not None:
+        if time.time() >= deadline:
+            raise TemplateNotFound(
+                f"still sitting at the Print Setup dialog after {HANDOVER_TIMEOUT:.0f}s"
+            )
+        time.sleep(1.0)
+    print("      print dialog closed — waiting for you to finish the cut...")
+
+    # Then wait for the Canvas tab to reappear, however long the cut takes.
+    while time.time() < deadline:
+        if screen.find("20_make_disabled.png", timeout=1.0) is not None:
+            return
+        if screen.find("21_make_enabled.png", timeout=1.0) is not None:
+            return
+        time.sleep(2.0)
+    raise TemplateNotFound(
+        f"Design Space never came back to the Canvas tab within {HANDOVER_TIMEOUT:.0f}s"
+    )
 
 
 def reset_after_print(screen: Screen, step: Step) -> None:
@@ -290,9 +320,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Printing {len(todo)} sheet(s). The script stops at the Print Setup dialog")
     print("every time — it never clicks Print and never presses Go on the Cricut.")
-    print("Bring Design Space to the front, on the Canvas tab.")
     print("Starting in 5s. Move the mouse to a screen corner to abort.")
     time.sleep(5)
+
+    # Take responsibility for focus rather than hoping: this types into whatever
+    # window is in front.
+    try:
+        native.focus_design_space()
+    except native.DesignSpaceNotFocused as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     # The flow clears the canvas at the END of each sheet, so sheet 2 onward starts
     # clean. Sheet 1 has no predecessor, and whatever was left on the canvas would

@@ -190,9 +190,14 @@ def main(argv: list[str] | None = None) -> int:
 
     last = args.start_at + len(sheets) - 1
     print(f"Uploading sheets {args.start_at}..{last} ({len(sheets)} total).")
-    print("Bring Design Space to the front, on the Canvas tab, canvas empty.")
     print("Starting in 5s. Move the mouse to a screen corner to abort.")
     time.sleep(5)
+
+    try:
+        native.focus_design_space()
+    except native.DesignSpaceNotFocused as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     for offset, sheet in enumerate(sheets):
         index = args.start_at + offset

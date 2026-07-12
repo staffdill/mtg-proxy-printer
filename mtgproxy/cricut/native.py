@@ -74,6 +74,75 @@ def _class_name(hwnd: int) -> str:
     return buf.value
 
 
+def find_design_space() -> int | None:
+    """Handle of the Design Space main window, or None if it is not running."""
+    found: list[int] = []
+
+    def callback(hwnd, _lparam):
+        if _user32.IsWindowVisible(hwnd) and DESIGN_SPACE_TITLE in _window_text(hwnd):
+            found.append(hwnd)
+        return True
+
+    _user32.EnumWindows(_EnumWindowsProc(callback), 0)
+    return found[0] if found else None
+
+
+def focus_design_space(timeout: float = 10.0) -> tuple[int, int, int, int]:
+    """Restore and foreground Design Space, and return its rect.
+
+    The script must not rely on somebody having left the right window focused —
+    it types into whatever is in front, so it takes responsibility for putting
+    Design Space there. Windows refuses a plain SetForegroundWindow from a process
+    that is not already in front, so attach to the current foreground thread's
+    input queue for the moment it takes to do the swap.
+    """
+    hwnd = find_design_space()
+    if hwnd is None:
+        raise DesignSpaceNotFocused("Cricut Design Space is not running")
+
+    kernel32 = ctypes.windll.kernel32
+    _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    time.sleep(0.3)
+
+    foreground = _user32.GetForegroundWindow()
+    this_thread = kernel32.GetCurrentThreadId()
+    other_thread = _user32.GetWindowThreadProcessId(foreground, None)
+    attached = bool(_user32.AttachThreadInput(this_thread, other_thread, True))
+    try:
+        _user32.BringWindowToTop(hwnd)
+        _user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            _user32.AttachThreadInput(this_thread, other_thread, False)
+    time.sleep(0.5)
+
+    try:
+        return require_design_space_foreground()
+    except DesignSpaceNotFocused:
+        pass
+
+    # Windows refuses the swap when another process holds the foreground lock —
+    # a Chrome Remote Desktop session bar does exactly this, and no amount of
+    # SetForegroundWindow will move it. A real mouse click always wins, so click
+    # the window's own top strip, which is inert (no tab, no button, no menu).
+    import pyautogui
+
+    rect = _RECT()
+    _user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    pyautogui.click(rect.left + round((rect.right - rect.left) * 0.45), rect.top + 12)
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            return require_design_space_foreground()
+        except DesignSpaceNotFocused:
+            time.sleep(0.3)
+    raise DesignSpaceNotFocused(
+        f"could not bring Design Space to the foreground within {timeout}s — "
+        "click on its window and try again"
+    )
+
+
 def require_design_space_foreground() -> tuple[int, int, int, int]:
     """Rect (left, top, right, bottom) of Design Space — but only if it is the
     foreground window. Raises otherwise.
