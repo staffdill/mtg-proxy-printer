@@ -261,9 +261,13 @@ def _back_to_canvas(screen: Screen, attempts: int = 4) -> None:
     for _ in range(attempts):
         if _on_canvas(screen):
             return
-        if screen.find("60_make_cancel.png", timeout=8.0) is None:
+        hit = screen.find("60_make_cancel.png", timeout=8.0)
+        if hit is None:
             break
-        screen.click("60_make_cancel.png", timeout=5.0, settle=4.0)
+        # Click where find() just saw it. Re-searching (screen.click) would race the
+        # UI: Design Space can move on between the two lookups, and then the click
+        # raises even though the Cancel it was told about was real.
+        screen.click_at(*hit[1], settle=4.0)
     if not _on_canvas(screen, timeout=6.0):
         screen._dump("stuck_after_print")
         raise TemplateNotFound(

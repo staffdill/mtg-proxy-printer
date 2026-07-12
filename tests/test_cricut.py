@@ -327,6 +327,11 @@ class _FakeScreen:
     def click(self, name, timeout=10.0, settle=1.0):
         self.clicks.append(name)
 
+    def click_at(self, x, y, settle=1.0):
+        # _back_to_canvas clicks the Cancel it just located, rather than searching
+        # for it a second time (which races the UI).
+        self.clicks.append("60_make_cancel.png")
+
 
 def test_the_gate_never_clicks_print_unless_auto_print_was_asked_for(monkeypatch):
     # Printing is irreversible: it spends paper and ink. It must never happen

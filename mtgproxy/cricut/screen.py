@@ -109,7 +109,12 @@ class Screen:
         return hit[1]
 
     def click(self, name: str, timeout: float = 10.0, settle: float = 1.0) -> None:
-        x, y = self.require(name, timeout=timeout)
+        self.click_at(*self.require(name, timeout=timeout), settle=settle)
+
+    def click_at(self, x: int, y: int, settle: float = 1.0) -> None:
+        """Click a point already located. Use this rather than click() when you have
+        just found something and the UI may move on before a second lookup — a
+        re-search can raise on a control that was genuinely there a moment ago."""
         pyautogui.moveTo(x, y, duration=0.2)
         pyautogui.click()
         time.sleep(settle)
