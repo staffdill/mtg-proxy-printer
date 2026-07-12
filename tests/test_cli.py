@@ -59,3 +59,21 @@ def test_main_returns_1_for_gap_less_than_2x_bleed(tmp_path, capsys):
     )
     assert rc == 1
     assert "error" in capsys.readouterr().err.lower()
+
+
+def test_main_returns_1_for_sticker_gap_below_design_space_bleed(tmp_path, capsys):
+    inp = tmp_path / "cards"
+    inp.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (100, 140), "red").save(inp / "card.png")
+
+    rc = main(
+        [
+            "--input", str(inp),
+            "--out", str(tmp_path / "o"),
+            "--sticker",
+            "--bleed", "0",
+            "--gap", "2",
+        ]
+    )
+    assert rc == 1
+    assert "error" in capsys.readouterr().err.lower()

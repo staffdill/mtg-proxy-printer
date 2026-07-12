@@ -8,6 +8,7 @@ from mtgproxy.geometry import (
     GeometryConfig,
     content_size_mm,
     trim_content_size_mm,
+    validate_sticker_gap,
 )
 from mtgproxy.sources import resolve_card_list
 
@@ -43,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     manifest = Path(args.manifest) if args.manifest else None
     try:
         cfg = GeometryConfig(bleed_mm=args.bleed, gap_mm=args.gap)
+        if args.sticker:
+            validate_sticker_gap(cfg)
         card_paths = resolve_card_list(input_dir, manifest)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)

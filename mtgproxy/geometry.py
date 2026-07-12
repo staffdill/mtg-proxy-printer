@@ -2,6 +2,11 @@ from dataclasses import dataclass
 
 MM_PER_INCH = 25.4
 
+# Design Space smears roughly 1/16in of bleed outward past every cut line when
+# its bleed option is on. Adjacent cards need at least twice that between them
+# or their bleeds collide.
+DESIGN_SPACE_BLEED_MM = MM_PER_INCH / 16
+
 
 @dataclass(frozen=True)
 class GeometryConfig:
@@ -122,3 +127,16 @@ def card_offsets_content_mm(cfg: GeometryConfig) -> list[tuple[float, float]]:
     origin_x = min(b.trim_x_mm for b in boxes) - cfg.bleed_mm
     origin_y = min(b.trim_y_mm for b in boxes) - cfg.bleed_mm
     return [(b.trim_x_mm - origin_x, b.trim_y_mm - origin_y) for b in boxes]
+
+
+def validate_sticker_gap(cfg: GeometryConfig) -> None:
+    """Sticker sheets cut on the printed edge, so Design Space adds its own
+    bleed outward from each cut line. Raise if the gap is too small to absorb
+    it. GeometryConfig's own gap >= 2*bleed check does not cover this: with
+    --bleed 0 it permits any gap at all."""
+    floor = 2 * DESIGN_SPACE_BLEED_MM
+    if cfg.gap_mm < floor:
+        raise ValueError(
+            f"gap_mm ({cfg.gap_mm}) must be >= {floor:.3f} in sticker mode so "
+            f"Design Space's own bleed does not run between adjacent cards"
+        )
