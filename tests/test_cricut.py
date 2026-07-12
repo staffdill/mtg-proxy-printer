@@ -297,22 +297,60 @@ def test_locate_sheet_refuses_when_the_sheet_is_not_in_the_library(tmp_path):
         printing.locate_sheet(screen, missing, sheets)
 
 
-def test_print_flow_never_clicks_print_or_go():
-    # The one invariant that costs real money to break.
-    actions = [s.action for s in flow.PRINT_FLOW]
-    assert "gate" in actions
-    assert not any(a in ("print", "send", "go") for a in actions)
-    # The Print button is only ever WAITED for, to learn the printer is ready --
-    # never clicked. If anyone ever wires it to a click, this fails.
+class _FakeScreen:
+    """A screen where the Print Setup dialog is up and everything is ready."""
+
+    def __init__(self):
+        self.clicks = []
+
+    def require(self, name, timeout=10.0):
+        return (0, 0)
+
+    def find(self, name, timeout=1.0):
+        # The print dialog is treated as already gone, so gate()'s wait loops exit
+        # immediately; everything else is "present".
+        if "52_print_ready" in name:
+            return None
+        return (1.0, (0, 0))
+
+    def click(self, name, timeout=10.0, settle=1.0):
+        self.clicks.append(name)
+
+
+def test_the_gate_never_clicks_print_unless_auto_print_was_asked_for(monkeypatch):
+    # Printing is irreversible: it spends paper and ink. It must never happen
+    # because of a default, an inference, or a timing accident -- only because a
+    # human passed --auto-print.
+    from mtgproxy.cricut import printing
+
+    monkeypatch.setattr(printing, "ensure_bleed", lambda screen, timeout: None)
     gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
     assert gate_step.template == "52_print_ready.png"
 
+    screen = _FakeScreen()
+    printing.gate(screen, gate_step, Path("sheets/sheet_03.png"), 1, 1, auto_print=False)
+    assert screen.clicks == [], f"the gate clicked {screen.clicks} without --auto-print"
+
+
+def test_the_gate_does_print_when_auto_print_is_asked_for(monkeypatch):
+    from mtgproxy.cricut import printing
+
+    monkeypatch.setattr(printing, "ensure_bleed", lambda screen, timeout: None)
+    gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
+    screen = _FakeScreen()
+    printing.gate(screen, gate_step, Path("sheets/sheet_03.png"), 1, 1, auto_print=True)
+    # Prints, then backs out WITHOUT cutting -- the cut happens later, from the
+    # saved project, so it must never reach the Cricut's Go button.
+    assert screen.clicks == ["52_print_ready.png", "60_make_cancel.png"]
+
+
+def test_the_flow_never_presses_go_on_the_cricut():
+    actions = [s.action for s in flow.PRINT_FLOW]
+    assert not any(a in ("go", "cut", "send_to_machine") for a in actions)
     src = (Path(__file__).parent.parent / "mtgproxy" / "cricut" / "printing.py").read_text(
         encoding="utf-8"
     )
-    gate_body = src.split("def gate(")[1].split("\ndef ")[0]
-    assert "pyautogui.click" not in gate_body, "the gate must not click anything"
-    assert "screen.click" not in gate_body, "the gate must not click anything"
+    assert "press_go" not in src and "go_btn" not in src
 
 
 def test_print_flow_sets_width_and_letter_before_it_reaches_the_gate():
@@ -326,3 +364,38 @@ def test_print_flow_sets_width_and_letter_before_it_reaches_the_gate():
 def test_every_print_template_exists():
     missing = [t for t in flow.PRINT_TEMPLATES if not (TEMPLATE_DIR / t).is_file()]
     assert not missing, f"missing print templates: {missing}"
+
+
+def test_bleed_check_ignores_the_green_layer_highlight_elsewhere_on_screen():
+    """The bleed toggle must only ever be looked for beside its own label.
+
+    Searching the whole screen for the green toggle false-matches the mint
+    highlight on a selected layer in the Layers panel at 0.98. A false "bleed is
+    already on" prints the entire run with a white sliver down every cut edge, so
+    this is the difference between a good deck and a ruined one.
+    """
+    from mtgproxy.cricut import printing
+
+    tog = Image.open(TEMPLATE_DIR / "53_bleed_on.png").convert("RGB")
+
+    # A screen where the toggle is OFF beside the label, but a green blob the same
+    # size sits somewhere else entirely (the Layers panel).
+    shot = Image.new("RGB", (1400, 700), (245, 245, 245))
+    label_xy = (600, 300)
+    off = Image.new("RGB", tog.size, (200, 200, 200))
+    ImageDraw.Draw(off).ellipse([2, 2, tog.height - 4, tog.height - 4], fill=(255, 255, 255))
+    shot.paste(off, (label_xy[0] + printing.BLEED_TOGGLE_DX - tog.width // 2,
+                     label_xy[1] - tog.height // 2))
+    shot.paste(tog, (100, 80))  # the decoy, far from the label
+
+    screen = Screen(grab=lambda: shot, template_dir=TEMPLATE_DIR)
+    assert not printing._bleed_is_on(screen, label_xy), (
+        "a green blob elsewhere on screen must not be read as 'bleed is on'"
+    )
+
+    # And when the toggle really IS on beside the label, it must say so.
+    shot2 = shot.copy()
+    shot2.paste(tog, (label_xy[0] + printing.BLEED_TOGGLE_DX - tog.width // 2,
+                      label_xy[1] - tog.height // 2))
+    screen2 = Screen(grab=lambda: shot2, template_dir=TEMPLATE_DIR)
+    assert printing._bleed_is_on(screen2, label_xy)

@@ -167,22 +167,53 @@ def select_letter(screen: Screen, step: Step) -> None:
     screen.click(step.template_alt, timeout=step.timeout, settle=step.settle)
 
 
+#: The Add Bleed toggle sits this far right of its own label, in a box this size.
+BLEED_TOGGLE_DX = 292
+BLEED_TOGGLE_BOX = (34, 22)
+
+
+def _bleed_is_on(screen: Screen, label_xy: tuple[int, int]) -> bool:
+    """Is the Add Bleed toggle green?
+
+    Searched for ONLY in the small box beside its own label, never across the whole
+    screen. A full-screen search for the green toggle false-matches the mint
+    highlight on a selected layer in the Layers panel at 0.98 — and a false "it is
+    already on" would print the whole run with no bleed and a white sliver down
+    every cut edge.
+    """
+    ax, ay = label_xy
+    w, h = BLEED_TOGGLE_BOX
+    cx = ax + BLEED_TOGGLE_DX
+    region = screen.grab().crop((cx - w, ay - h, cx + w, ay + h))
+    template = screen.load("53_bleed_on.png")
+    if template.width > region.width or template.height > region.height:
+        return False
+    confidence, _ = match(region, template)
+    return confidence >= screen.confidence
+
+
 def ensure_bleed(screen: Screen, timeout: float) -> None:
     """Add Bleed must be ON. Without it the blade cuts exactly on the printed edge
     and any registration drift shows white paper. It defaults to on — but a silent
-    assumption is not a guarantee, so click it if it is off and then insist."""
-    if screen.find("53_bleed_on.png", timeout=3.0) is None:
-        ax, ay = screen.require("51_add_bleed.png", timeout=timeout)
-        pyautogui.click(ax + 292, ay)  # the toggle sits right of its label
-        time.sleep(1.0)
-    screen.require("53_bleed_on.png", timeout=timeout)
+    assumption is not a guarantee, so check it, click it if it is off, and insist."""
+    ax, ay = screen.require("51_add_bleed.png", timeout=timeout)
+    if not _bleed_is_on(screen, (ax, ay)):
+        pyautogui.click(ax + BLEED_TOGGLE_DX, ay)
+        time.sleep(1.2)
+    if not _bleed_is_on(screen, (ax, ay)):
+        screen._dump("bleed_off")
+        raise TemplateNotFound(
+            "Add Bleed is still off after clicking it — refusing to print, every "
+            "card would come out with a white edge"
+        )
 
 
 #: How long the human gets to print, cut, and come back before the script gives up.
 HANDOVER_TIMEOUT = 900.0
 
 
-def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int) -> None:
+def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int,
+         auto_print: bool = False) -> None:
     """Stop and hand the mouse over. Everything past here spends physical material.
 
     Waits on the SCREEN rather than on stdin: the script has no terminal to read
@@ -193,6 +224,23 @@ def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int) -> Non
     # Print goes green only once one is actually selected.
     screen.require(step.template, timeout=step.timeout)
     ensure_bleed(screen, timeout=step.timeout)
+
+    if auto_print:
+        # Only ever reached because a human passed --auto-print. This spends paper
+        # and ink with nobody watching, so it is never the default and never
+        # inferred.
+        print("      --auto-print: clicking Print")
+        screen.click(step.template, timeout=step.timeout, settle=3.0)
+        deadline = time.time() + HANDOVER_TIMEOUT
+        while screen.find(step.template, timeout=1.0) is not None:
+            if time.time() >= deadline:
+                raise TemplateNotFound("the Print Setup dialog never closed after Print")
+            time.sleep(1.0)
+        print("      printed — backing out without cutting")
+        # Design Space now wants us to cut. We do not: the cut happens later, from
+        # the saved project. Cancel back to the canvas.
+        screen.click("60_make_cancel.png", timeout=30.0, settle=3.0)
+        return
 
     print(
         f"\n  >>> {sheet.name} ({index}/{total}) is at the Print Setup dialog.\n"
@@ -247,7 +295,8 @@ def reset_after_print(screen: Screen, step: Step) -> None:
     screen.require(step.template, timeout=step.timeout)
 
 
-def print_sheet(screen: Screen, sheet: Path, siblings: list[Path], index: int, total: int) -> None:
+def print_sheet(screen: Screen, sheet: Path, siblings: list[Path], index: int, total: int,
+                auto_print: bool = False) -> None:
     print(f"\n[{index}/{total}] {sheet.name}")
     for step in PRINT_FLOW:
         print(f"    {step.name}")
@@ -262,7 +311,7 @@ def print_sheet(screen: Screen, sheet: Path, siblings: list[Path], index: int, t
         elif step.action == "select_letter":
             select_letter(screen, step)
         elif step.action == "gate":
-            gate(screen, step, sheet, index, total)
+            gate(screen, step, sheet, index, total, auto_print=auto_print)
         elif step.action == "reset_after_print":
             reset_after_print(screen, step)
         else:
@@ -280,6 +329,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Locate every template and report confidence. Clicks nothing."
+    )
+    parser.add_argument(
+        "--auto-print", action="store_true",
+        help="Click Print automatically instead of handing over. Spends paper and ink "
+             "unattended — make sure the tray holds enough matte stock for every sheet.",
     )
     args = parser.parse_args(argv)
 
@@ -343,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for i, sheet in enumerate(todo, start=1):
         try:
-            print_sheet(screen, sheet, everything, i, len(todo))
+            print_sheet(screen, sheet, everything, i, len(todo), auto_print=args.auto_print)
         except (TemplateNotFound, WrongSheet, native.DialogNotFound,
                 native.DesignSpaceNotFocused, RuntimeError) as e:
             n = int(sheet.stem.split("_")[1])
