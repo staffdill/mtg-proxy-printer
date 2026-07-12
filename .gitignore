@@ -11,3 +11,5 @@ venv/
 
 # Generated print sheets
 out/
+sheets/
+debug/
