@@ -49,6 +49,20 @@ from and leaves a screenshot in `debug/` showing what was actually on screen.
 
 `--dry-run` locates every template and reports match confidence without clicking anything.
 
+## The one number that matters: 5.276 in
+
+Set the sheet's **width to 5.276 in** (height follows to ~7.248). Nothing else.
+
+- It **imports at ~10.98 in** — Design Space ignores the PNG's DPI. Left alone, it is
+  outside the Print Then Cut area and raises a warning.
+- **6.73 × 9.25 in is NOT a size to set.** That is the *maximum* Print Then Cut area —
+  a boundary your artwork fits inside, not a target. Sizing the sheet to fill it scales
+  everything by ~1.28×, and 63 × 88 mm cards cut out at roughly **80 × 112 mm**.
+  The trap is that the aspect ratios are nearly identical (6.73/9.25 = 0.7276 vs the
+  sheet's 0.7278), so it looks perfectly proportioned on screen — just silently 28% too
+  big, which you only discover once the cards are off the mat.
+- Opening the **saved project**? Then set nothing. The size is stored with it.
+
 ## 3. Print and cut, one sheet at a time
 
 For each sheet, in Design Space:
@@ -95,3 +109,39 @@ That is a machine procedure, not a code bug — don't go looking in the Python f
 | Paper curls → sensor fails | Dry flat, gently back-roll, load flat. |
 | Card tears on removal | LightGrip mat, and peel the mat away from the card. |
 | Cut doesn't go all the way through | Custom / "more" pressure, fresh blade, multi-cut ×2. |
+
+## Automated runs
+
+```
+# Upload sheets into the Cricut library
+python -m mtgproxy.cricut.upload --sheets ./sheets
+
+# Build ONE project holding every sheet -- this is what you open elsewhere to CUT
+python -m mtgproxy.cricut.printing --sheets ./sheets --build-project
+# then rename the project by hand (Auto Save saves it; there is no save dialog)
+
+# Print. Default stops at the Print Setup dialog for you to click Print.
+python -m mtgproxy.cricut.printing --sheets ./sheets
+# ...or print unattended. Load enough matte stock for EVERY sheet first.
+python -m mtgproxy.cricut.printing --sheets ./sheets --auto-print
+
+# Any of them: --dry-run locates templates and clicks nothing; --start-at N resumes.
+```
+
+Do not touch the mouse while these run. A screen corner aborts.
+
+**If a run halts under `--auto-print`, the current sheet may already be on paper.**
+Check the printer before resuming, or you will print it twice.
+
+## Cutting from the saved project (e.g. on another machine)
+
+1. Open the project from **My Stuff**. One mat per sheet.
+2. **Make It** → on the Prepare screen, **set Material Size to Letter (8.5 × 11)**.
+   It defaults to **A4** and is *not* saved with the project, so it comes up wrong every
+   time. A4 lays the registration marks out for the wrong page and the cut will miss.
+   Mirror stays off.
+3. Continue → **"I've Already Printed"** to skip printing and go straight to the cut.
+4. Set Base Material (light paper / copy paper), load the LightGrip mat, press **Go**.
+5. Peel the **mat away from the card**. Repeat per mat.
+
+Do **not** resize anything here. The sheets are already stored at 5.276 in.
