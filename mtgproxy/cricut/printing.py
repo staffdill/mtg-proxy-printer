@@ -318,6 +318,33 @@ def print_sheet(screen: Screen, sheet: Path, siblings: list[Path], index: int, t
             raise RuntimeError(f"unknown action {step.action!r} in step {step.name!r}")
 
 
+
+def build_project(screen: Screen, sheets: list[Path], everything: list[Path]) -> None:
+    """Place every sheet onto ONE canvas, each sized to 5.276in, and stop.
+
+    Design Space has Auto Save on, so the project saves itself; name it once by
+    hand. This is the artifact you open on the other machine to CUT from: Make It
+    turns each Print Then Cut layer into its own mat (only one sheet fits inside
+    the 6.75 x 9.25in Print Then Cut area, so they cannot share), and each mat
+    offers "I've Already Printed" -> cut.
+
+    Nothing here prints, and nothing here clears the canvas: the whole point is
+    that the sheets accumulate.
+    """
+    place = next(s for s in PRINT_FLOW if s.action == "place_sheet")
+    size_btn = next(s for s in PRINT_FLOW if s.action == "click" and s.template == "30_size_btn.png")
+    width = next(s for s in PRINT_FLOW if s.action == "set_width")
+    panel = next(s for s in PRINT_FLOW if s.action == "ensure_panel")
+
+    for i, sheet in enumerate(sheets, start=1):
+        print(f"\n[{i}/{len(sheets)}] adding {sheet.name}")
+        ensure_panel(screen, panel)
+        place_sheet(screen, place, sheet, everything)
+        screen.click(size_btn.template, timeout=size_btn.timeout, settle=size_btn.settle)
+        set_width(screen, width)
+    print(f"\n{len(sheets)} sheet(s) on the canvas. Auto Save has saved the project.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Drive Design Space to the Print Setup dialog for each sheet, "
@@ -329,6 +356,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Locate every template and report confidence. Clicks nothing."
+    )
+    parser.add_argument(
+        "--build-project", action="store_true",
+        help="Place and size every sheet onto ONE canvas and stop. Does not print. "
+             "This is the project you open elsewhere to cut from.",
     )
     parser.add_argument(
         "--auto-print", action="store_true",
@@ -363,6 +395,19 @@ def main(argv: list[str] | None = None) -> int:
         except TemplateNotFound as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
+
+    if args.build_project:
+        todo = list_sheets(folder, start_at=args.start_at)
+        print(f"Building one project from {len(todo)} sheet(s). Nothing will print.")
+        print("Starting in 5s. Move the mouse to a screen corner to abort.")
+        time.sleep(5)
+        try:
+            native.focus_design_space()
+            build_project(screen, todo, everything)
+        except (TemplateNotFound, WrongSheet, native.DesignSpaceNotFocused, RuntimeError) as e:
+            print(f"\nerror: {e}", file=sys.stderr)
+            return 1
+        return 0
 
     if args.only is not None:
         todo = [p for p in everything if int(p.stem.split("_")[1]) == args.only]
