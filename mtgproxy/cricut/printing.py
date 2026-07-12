@@ -258,6 +258,11 @@ def _back_to_canvas(screen: Screen, attempts: int = 4) -> None:
     screen, which needs its own. Rather than hardcode "click Cancel twice" and be
     wrong the day Cricut adds a step, click until the Canvas is genuinely there.
     """
+    # Take focus back first. This runs at the end of a long unattended sheet, which
+    # is exactly when a human wanders over and clicks something else — and then the
+    # screenshots are of THEIR window, not Design Space, and nothing matches.
+    native.focus_design_space()
+
     for _ in range(attempts):
         if _on_canvas(screen):
             return

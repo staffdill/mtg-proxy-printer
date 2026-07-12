@@ -340,6 +340,7 @@ def test_the_gate_never_clicks_print_unless_auto_print_was_asked_for(monkeypatch
     from mtgproxy.cricut import printing
 
     monkeypatch.setattr(printing, "ensure_bleed", lambda screen, timeout: None)
+    monkeypatch.setattr(printing.native, "focus_design_space", lambda: (0, 0, 100, 100))
     gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
     assert gate_step.template == "52_print_ready.png"
 
@@ -354,6 +355,7 @@ def test_the_gate_does_print_when_auto_print_is_asked_for(monkeypatch):
     from mtgproxy.cricut import printing
 
     monkeypatch.setattr(printing, "ensure_bleed", lambda screen, timeout: None)
+    monkeypatch.setattr(printing.native, "focus_design_space", lambda: (0, 0, 100, 100))
     gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
     screen = _FakeScreen()
     printing.gate(screen, gate_step, Path("sheets/sheet_03.png"), 1, 1, auto_print=True)
@@ -462,6 +464,7 @@ def test_reset_backs_out_of_the_make_flow_before_looking_for_the_canvas(monkeypa
     screen = _FakeScreen(cancels_needed=2)
     monkeypatch.setattr(printing.native, "require_design_space_foreground",
                         lambda: (0, 0, 100, 100))
+    monkeypatch.setattr(printing.native, "focus_design_space", lambda: (0, 0, 100, 100))
     step = flow.Step("reset", "reset_after_print", "20_make_disabled.png", timeout=1.0)
 
     printing.reset_after_print(screen, step)
