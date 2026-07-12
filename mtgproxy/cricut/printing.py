@@ -346,7 +346,15 @@ def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int,
 
 
 def reset_after_print(screen: Screen, step: Step) -> None:
-    """Get back to a known-empty canvas, whatever state the human left behind."""
+    """Get back to a known-empty canvas, from wherever Design Space happens to be.
+
+    Do not assume we are on the Canvas. A previous run can leave Design Space parked
+    on the Make or Prepare screen, where there is no Make button at all — so a reset
+    that only looks for one waits out its whole timeout for something that cannot
+    appear. Back out to the Canvas first, then clear it.
+    """
+    _back_to_canvas(screen)
+
     hit = screen.find(step.template, timeout=5.0)  # 20_make_disabled => already empty
     if hit:
         return

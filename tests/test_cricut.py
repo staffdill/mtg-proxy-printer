@@ -447,3 +447,25 @@ def test_the_two_cancel_buttons_are_not_interchangeable():
         "if these two ever become interchangeable, drop 64_prepare_cancel -- but "
         f"today the Make Cancel matches the Prepare Cancel at only {confidence:.3f}"
     )
+
+
+def test_reset_backs_out_of_the_make_flow_before_looking_for_the_canvas(monkeypatch):
+    """A previous run can leave Design Space parked on the Prepare screen.
+
+    There is no Make button there at all, so a reset that only looks for one waits
+    out its entire timeout for something that cannot appear -- which is exactly how
+    the print run stalled on startup instead of clearing the canvas.
+    """
+    from mtgproxy.cricut import printing
+
+    # cancels_needed=2: we start on the Make screen, two Cancels from the Canvas.
+    screen = _FakeScreen(cancels_needed=2)
+    monkeypatch.setattr(printing.native, "require_design_space_foreground",
+                        lambda: (0, 0, 100, 100))
+    step = flow.Step("reset", "reset_after_print", "20_make_disabled.png", timeout=1.0)
+
+    printing.reset_after_print(screen, step)
+
+    assert screen.clicks.count("60_make_cancel.png") == 2, (
+        "reset must cancel its way back to the Canvas before hunting for the Make button"
+    )
