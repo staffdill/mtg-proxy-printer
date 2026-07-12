@@ -211,6 +211,66 @@ def ensure_bleed(screen: Screen, timeout: float) -> None:
 #: How long the human gets to print, cut, and come back before the script gives up.
 HANDOVER_TIMEOUT = 900.0
 
+#: The "Connect your machine" modal's close X, relative to its title's centre.
+CONNECT_CLOSE_OFFSET = (406, -19)
+
+
+def _dismiss_post_print_modals(screen: Screen) -> None:
+    """Clear the two modals Design Space only raises after a sheet REALLY prints.
+
+    Neither can be seen by a dry run or a gated run, because neither exists until
+    ink hits paper — which is why they were both missed until the first live
+    auto-print:
+
+    1. "Verify Print Quality" — asks you to check the sensor marks. It covers the
+       Cancel button.
+    2. "Connect your machine" — Design Space auto-advances to Set Base Material and
+       goes looking for the Cricut. It also covers Cancel, Escape does not close
+       it, and clicking its X raises a further "are you sure?" confirmation. We are
+       not cutting here, so the machine being absent is expected and fine.
+    """
+    if screen.find("61_verify_done.png", timeout=20.0):
+        screen.click("61_verify_done.png", timeout=5.0, settle=2.0)
+
+    hit = screen.find("62_connect_machine.png", timeout=8.0)
+    if hit:
+        tx, ty = hit[1]
+        dx, dy = CONNECT_CLOSE_OFFSET
+        pyautogui.click(tx + dx, ty + dy)  # its close X
+        time.sleep(1.5)
+        if screen.find("63_confirm_yes.png", timeout=8.0):
+            screen.click("63_confirm_yes.png", timeout=5.0, settle=2.5)
+
+
+def _on_canvas(screen: Screen, timeout: float = 2.0) -> bool:
+    """Are we back on the Canvas tab? The Make button only exists there — greyed
+    with an empty canvas, green with something on it."""
+    return bool(
+        screen.find("20_make_disabled.png", timeout=timeout)
+        or screen.find("21_make_enabled.png", timeout=timeout)
+    )
+
+
+def _back_to_canvas(screen: Screen, attempts: int = 4) -> None:
+    """Cancel out of the Make flow until the Canvas is actually showing.
+
+    One Cancel is not enough: the Make screen's Cancel drops you onto the Prepare
+    screen, which needs its own. Rather than hardcode "click Cancel twice" and be
+    wrong the day Cricut adds a step, click until the Canvas is genuinely there.
+    """
+    for _ in range(attempts):
+        if _on_canvas(screen):
+            return
+        if screen.find("60_make_cancel.png", timeout=8.0) is None:
+            break
+        screen.click("60_make_cancel.png", timeout=5.0, settle=4.0)
+    if not _on_canvas(screen, timeout=6.0):
+        screen._dump("stuck_after_print")
+        raise TemplateNotFound(
+            "could not get back to the Canvas after printing — Design Space is stuck "
+            "on some screen the flow does not know about (see debug/)"
+        )
+
 
 def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int,
          auto_print: bool = False) -> None:
@@ -237,15 +297,10 @@ def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int,
                 raise TemplateNotFound("the Print Setup dialog never closed after Print")
             time.sleep(1.0)
         print("      printed — backing out without cutting")
-        # Design Space raises a "Verify Print Quality" modal once the sheet has
-        # actually gone to the printer. It only ever appears after a real print, so
-        # nothing before the first live run could have seen it — and it sits on top
-        # of the Cancel button. Dismiss it first.
-        if screen.find("61_verify_done.png", timeout=20.0):
-            screen.click("61_verify_done.png", timeout=5.0, settle=2.0)
+        _dismiss_post_print_modals(screen)
         # Design Space now wants us to cut. We do not: the cut happens later, from
-        # the saved project. Cancel back to the canvas.
-        screen.click("60_make_cancel.png", timeout=30.0, settle=3.0)
+        # the saved project.
+        _back_to_canvas(screen)
         return
 
     print(

@@ -298,19 +298,30 @@ def test_locate_sheet_refuses_when_the_sheet_is_not_in_the_library(tmp_path):
 
 
 class _FakeScreen:
-    """A screen where the Print Setup dialog is up and everything is ready."""
+    """Models the real post-print sequence Design Space puts you through.
 
-    def __init__(self):
+    It matters that this is not "everything is findable": the Make screen's Cancel
+    only reaches the Prepare screen, so the Canvas must NOT appear until Cancel has
+    been clicked twice. A fake that says "you're already on the canvas" would let a
+    broken backout pass.
+    """
+
+    def __init__(self, cancels_needed=2):
         self.clicks = []
+        self.cancels_needed = cancels_needed
 
     def require(self, name, timeout=10.0):
         return (0, 0)
 
     def find(self, name, timeout=1.0):
-        # The print dialog is treated as already gone, so gate()'s wait loops exit
-        # immediately; everything else is "present".
+        # The Print Setup dialog is treated as already closed, so gate()'s wait
+        # loop exits at once.
         if "52_print_ready" in name:
             return None
+        # The Canvas only shows up once we have cancelled our way back to it.
+        if "make_disabled" in name or "make_enabled" in name:
+            cancelled = self.clicks.count("60_make_cancel.png")
+            return (1.0, (0, 0)) if cancelled >= self.cancels_needed else None
         return (1.0, (0, 0))
 
     def click(self, name, timeout=10.0, settle=1.0):
@@ -327,7 +338,9 @@ def test_the_gate_never_clicks_print_unless_auto_print_was_asked_for(monkeypatch
     gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
     assert gate_step.template == "52_print_ready.png"
 
-    screen = _FakeScreen()
+    # cancels_needed=0: the human has already printed, cut, and come back to the
+    # Canvas, which is what the non-auto gate waits for.
+    screen = _FakeScreen(cancels_needed=0)
     printing.gate(screen, gate_step, Path("sheets/sheet_03.png"), 1, 1, auto_print=False)
     assert screen.clicks == [], f"the gate clicked {screen.clicks} without --auto-print"
 
@@ -342,11 +355,15 @@ def test_the_gate_does_print_when_auto_print_is_asked_for(monkeypatch):
     # Prints, dismisses the "Verify Print Quality" modal Design Space raises once a
     # sheet has really gone to the printer, then backs out WITHOUT cutting -- the
     # cut happens later, from the saved project, so it never reaches the Go button.
-    assert screen.clicks == [
-        "52_print_ready.png",
-        "61_verify_done.png",
-        "60_make_cancel.png",
-    ]
+    # 52 = Print. 61 = "Verify Print Quality". 63 = the "are you sure?" behind the
+    # "Connect your machine" modal's X. 60 = Cancel, clicked until the Canvas is
+    # actually back (the Make screen's Cancel only reaches the Prepare screen).
+    assert screen.clicks[0] == "52_print_ready.png"
+    assert "52_print_ready.png" not in screen.clicks[1:], "Print must be clicked exactly once"
+    assert "61_verify_done.png" in screen.clicks
+    # Cancelled until the Canvas actually came back -- twice here, because the Make
+    # screen's Cancel only reaches the Prepare screen.
+    assert screen.clicks.count("60_make_cancel.png") == 2
 
 
 def test_the_flow_never_presses_go_on_the_cricut():
