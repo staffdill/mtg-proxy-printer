@@ -35,12 +35,26 @@ def composite_sheet(
 
 def rounded_card(img: Image.Image, cfg: GeometryConfig) -> Image.Image:
     """A single card sized to trim (63x88mm) with rounded corners cut out as
-    transparency — an RGBA 'sticker' Design Space can auto-cut around."""
+    transparency — an RGBA 'sticker' Design Space can auto-cut around.
+
+    Source art carries bleed (MPC images extend ~3mm past the trim edge), so it
+    is rendered at the bleed box — the scale it was authored at — and the bleed
+    ring is then cropped away. Scaling the bleed image straight into the trim
+    box instead shrinks the card face by ~6% and leaves the bleed ring showing
+    as a fake border.
+    """
     ppm = cfg.px_per_mm()
     w = round(cfg.card_w_mm * ppm)
     h = round(cfg.card_h_mm * ppm)
+    bleed_w = round((cfg.card_w_mm + 2 * cfg.bleed_mm) * ppm)
+    bleed_h = round((cfg.card_h_mm + 2 * cfg.bleed_mm) * ppm)
     radius = round(cfg.corner_radius_mm * ppm)
-    card = resize_cover(img.convert("RGB"), w, h).convert("RGBA")
+
+    full = resize_cover(img.convert("RGB"), bleed_w, bleed_h)
+    left = (bleed_w - w) // 2
+    top = (bleed_h - h) // 2
+    card = full.crop((left, top, left + w, top + h)).convert("RGBA")
+
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
     card.putalpha(mask)

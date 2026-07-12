@@ -11,6 +11,7 @@ from mtgproxy.layout import (
     resize_cover,
     composite_sheet,
     composite_sticker_sheet,
+    rounded_card,
 )
 
 
@@ -75,4 +76,45 @@ def test_sticker_sheet_transparent_with_rounded_cards():
     ppm = cfg.px_per_mm()
     inside = (round(20 * ppm), round(30 * ppm))  # 20mm,30mm into the first card
     px = sheet.getpixel(inside)
+    assert px[3] == 255 and px[:3] == (255, 0, 0)
+
+
+def test_rounded_card_crops_bleed_instead_of_shrinking_the_face():
+    # A source authored the way MPC authors them: a bleed ring around the card
+    # face. Card face RED, bleed ring BLUE, rendered at exactly 10 px/mm.
+    # bleed_mm=6 (not the 3mm default) so the ring is thick enough that a
+    # sampled point cannot land ambiguously on the boundary.
+    cfg = GeometryConfig(bleed_mm=6.0, gap_mm=12.0)
+    src = Image.new("RGB", (750, 1000), "blue")  # 75 x 100 mm at 10 px/mm
+    src.paste(Image.new("RGB", (630, 880), "red"), (60, 60))  # the 63x88mm face
+
+    out = rounded_card(src, cfg)
+
+    ppm = cfg.px_per_mm()
+    assert out.size == (round(cfg.card_w_mm * ppm), round(cfg.card_h_mm * ppm))
+
+    # 2mm inside each edge midpoint must be the card FACE (red), not bleed (blue).
+    # The bug renders the bleed ring inside the trim box, so these come out blue.
+    inset = round(2 * ppm)
+    w, h = out.size
+    for point in [
+        (inset, h // 2),          # left edge
+        (w - inset - 1, h // 2),  # right edge
+        (w // 2, inset),          # top edge
+        (w // 2, h - inset - 1),  # bottom edge
+    ]:
+        r, g, b, a = out.getpixel(point)
+        assert a == 255, f"{point} should be opaque"
+        assert r > 200 and b < 55, f"{point} is bleed, not card face: {(r, g, b)}"
+
+
+def test_rounded_card_with_zero_bleed_is_a_plain_trim_resize():
+    # The "no bleed" folder: source art IS the card face, nothing to crop.
+    cfg = GeometryConfig(bleed_mm=0.0, gap_mm=8.0)
+    src = Image.new("RGB", (630, 880), "red")
+    out = rounded_card(src, cfg)
+
+    ppm = cfg.px_per_mm()
+    assert out.size == (round(cfg.card_w_mm * ppm), round(cfg.card_h_mm * ppm))
+    px = out.getpixel((out.width // 2, out.height // 2))
     assert px[3] == 255 and px[:3] == (255, 0, 0)
