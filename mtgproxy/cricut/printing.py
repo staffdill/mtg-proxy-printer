@@ -261,7 +261,12 @@ def _back_to_canvas(screen: Screen, attempts: int = 4) -> None:
     for _ in range(attempts):
         if _on_canvas(screen):
             return
-        hit = screen.find("60_make_cancel.png", timeout=8.0)
+        # Two different Cancels, and they are visually INVERTED: the Make screen's is
+        # solid green with white text, the Prepare screen's is white with green text.
+        # In grayscale they correlate at only 0.67, so one template cannot match both.
+        hit = screen.find("60_make_cancel.png", timeout=6.0) or screen.find(
+            "64_prepare_cancel.png", timeout=6.0
+        )
         if hit is None:
             break
         # Click where find() just saw it. Re-searching (screen.click) would race the

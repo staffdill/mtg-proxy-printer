@@ -426,3 +426,24 @@ def test_bleed_check_ignores_the_green_layer_highlight_elsewhere_on_screen():
                       label_xy[1] - tog.height // 2))
     screen2 = Screen(grab=lambda: shot2, template_dir=TEMPLATE_DIR)
     assert printing._bleed_is_on(screen2, label_xy)
+
+
+def test_the_two_cancel_buttons_are_not_interchangeable():
+    """Design Space has TWO Cancel buttons and they are visually inverted.
+
+    The Make screen's is solid green with white text; the Prepare screen's is white
+    with green text. Matched in grayscale they correlate at only ~0.67, so a single
+    template silently fails to find one of them -- which is exactly how the print
+    run got stranded on the Prepare screen after every sheet.
+    """
+    make = Image.open(TEMPLATE_DIR / "60_make_cancel.png").convert("RGB")
+    prep = Image.open(TEMPLATE_DIR / "64_prepare_cancel.png").convert("RGB")
+    from mtgproxy.cricut.screen import DEFAULT_CONFIDENCE
+
+    field = Image.new("RGB", (prep.width + 40, prep.height + 40), (255, 255, 255))
+    field.paste(prep, (20, 20))
+    confidence, _ = match(field, make)
+    assert confidence < DEFAULT_CONFIDENCE, (
+        "if these two ever become interchangeable, drop 64_prepare_cancel -- but "
+        f"today the Make Cancel matches the Prepare Cancel at only {confidence:.3f}"
+    )
