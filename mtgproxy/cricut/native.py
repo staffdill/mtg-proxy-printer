@@ -28,6 +28,7 @@ from pathlib import Path
 from pywinauto import Desktop
 
 DIALOG_CLASS = "#32770"
+DESIGN_SPACE_TITLE = "Cricut Design Space"
 
 #: Win32 common-dialog control ids. Stable across Windows versions and languages.
 FILE_NAME_EDIT_ID = "1148"
@@ -37,9 +38,27 @@ _user32 = ctypes.windll.user32
 _EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
 
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
 class DialogNotFound(RuntimeError):
     """A native dialog did not appear in time. Always fatal — never fall through
     to clicking blind."""
+
+
+class DesignSpaceNotFocused(RuntimeError):
+    """Design Space is not the foreground window.
+
+    Fatal before any keystroke, because keystrokes go wherever the focus is. The
+    canvas is cleared with Ctrl+A then Delete; sent to the wrong window that
+    selects and destroys somebody else's work.
+    """
 
 
 def _window_text(hwnd: int) -> str:
@@ -53,6 +72,26 @@ def _class_name(hwnd: int) -> str:
     buf = ctypes.create_unicode_buffer(256)
     _user32.GetClassNameW(hwnd, buf, 256)
     return buf.value
+
+
+def require_design_space_foreground() -> tuple[int, int, int, int]:
+    """Rect (left, top, right, bottom) of Design Space — but only if it is the
+    foreground window. Raises otherwise.
+
+    Call this before sending a keystroke that destroys something. It is the only
+    thing standing between a mis-aimed Ctrl+A/Delete and whatever application
+    happens to have focus instead.
+    """
+    hwnd = _user32.GetForegroundWindow()
+    title = _window_text(hwnd)
+    if DESIGN_SPACE_TITLE not in title:
+        raise DesignSpaceNotFocused(
+            f"foreground window is {title!r}, not Design Space — refusing to send "
+            "keystrokes that would land in it"
+        )
+    rect = _RECT()
+    _user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return (rect.left, rect.top, rect.right, rect.bottom)
 
 
 def find_dialog(title: str = "Open") -> int | None:

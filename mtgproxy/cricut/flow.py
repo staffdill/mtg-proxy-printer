@@ -59,11 +59,17 @@ UPLOAD_FLOW: tuple[Step, ...] = (
     # sit in the library waiting to be added — that is the macOS behaviour). Left
     # there, sheet N+1 would stack on top of sheet N and every later sheet would
     # be wrong. Invariant: the canvas is empty before the next sheet starts.
-    Step("clear the canvas", "clear_canvas", settle=1.0),
+    # 20_make_disabled is the POST-condition, not a thing to click: with an empty
+    # canvas Design Space greys the Make button out. If it is still live, something
+    # survived the delete and the next sheet would stack on top of it.
+    Step("clear the canvas", "clear_canvas", "20_make_disabled.png", timeout=15.0, settle=1.5),
 )
 
-#: Every template file the flow needs. Deduplicated: the Continue button is the
-#: same control on the preview and convert screens.
+#: Every template file the flow needs, including ones an action reaches for that
+#: are not the step's own `template` (the Upload rail tab). Deduplicated: Continue
+#: is the same control on the preview and convert screens.
 TEMPLATES: tuple[str, ...] = tuple(
-    dict.fromkeys(s.template for s in UPLOAD_FLOW if s.template)
-) + ("00_upload_tab.png",)
+    dict.fromkeys(
+        [s.template for s in UPLOAD_FLOW if s.template] + ["00_upload_tab.png"]
+    )
+)

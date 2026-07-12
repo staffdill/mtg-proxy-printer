@@ -21,17 +21,21 @@ import time
 from pathlib import Path
 
 import pyautogui
+from PIL import Image
 
 from mtgproxy.cricut import native
 from mtgproxy.cricut.flow import TEMPLATES, UPLOAD_FLOW, Step
-from mtgproxy.cricut.screen import Screen, TemplateNotFound
+from mtgproxy.cricut.screen import Screen, TemplateNotFound, match
 
-_SHEET_RE = re.compile(r"sheet_(\d+)\.png$", re.IGNORECASE)
+_SHEET_RE = re.compile(r"sheet_(\d+)\.png", re.IGNORECASE)
 
-#: A point on the canvas that is always empty — right of the placed sheet, above
-#: the zoom controls. Clicking here gives the canvas keyboard focus so Ctrl+A
-#: selects the artwork rather than whatever panel last had focus.
-EMPTY_CANVAS_XY = (1650, 1150)
+#: Where inside the Design Space window to click to give the canvas keyboard
+#: focus, as a fraction of the window's own size. Low and to the right: past the
+#: sheet (which sits top-left on the canvas) but clear of the zoom controls along
+#: the bottom edge. Derived from the live window rect rather than hardcoded to
+#: screen pixels, so moving or resizing the window cannot send the click into a
+#: different application.
+CANVAS_FOCUS_FRACTION = (0.80, 0.80)
 
 
 def list_sheets(folder: Path, start_at: int = 1) -> list[Path]:
@@ -39,21 +43,31 @@ def list_sheets(folder: Path, start_at: int = 1) -> list[Path]:
     before sheet_2 the moment a deck needs ten or more sheets."""
     numbered = []
     for path in folder.glob("*.png"):
-        m = _SHEET_RE.search(path.name)
+        m = _SHEET_RE.fullmatch(path.name)
         if m:
             numbered.append((int(m.group(1)), path))
     return [p for n, p in sorted(numbered) if n >= start_at]
 
 
 def preflight(sheets: list[Path], screen: Screen) -> None:
-    """Fail before touching anything, rather than halfway through sheet 7."""
+    """Fail before touching anything, rather than halfway through sheet 7.
+
+    Every template is loaded AND matched against a blank image here. That second
+    part is not busywork: a featureless crop cannot be matched by normalized
+    correlation at all, and this is the only place that catches it before the
+    run starts clicking.
+    """
     if not sheets:
         raise ValueError(
             "no sheets found — generate them first with "
             "`python -m mtgproxy.cli --input <folder> --out ./sheets --sticker`"
         )
+    probe = Image.new("RGB", (64, 64), (255, 255, 255))
     for name in TEMPLATES:
-        screen.load(name)  # raises TemplateNotFound if the file is missing
+        template = screen.load(name)  # raises TemplateNotFound if the file is missing
+        canvas = Image.new("RGB", (template.width + 8, template.height + 8), (255, 255, 255))
+        canvas.paste(probe.resize(canvas.size))
+        match(canvas, template)  # raises TemplateNotFound if the crop is featureless
 
 
 def ensure_panel(screen: Screen, step: Step) -> None:
@@ -68,19 +82,39 @@ def ensure_panel(screen: Screen, step: Step) -> None:
     pyautogui.press("escape")
     time.sleep(step.settle)
     if screen.find(step.template, timeout=1.0) is None:
-        screen.click("00_upload_tab.png", timeout=10.0, settle=1.2)
+        screen.click("00_upload_tab.png", timeout=step.timeout, settle=1.2)
 
 
 def clear_canvas(screen: Screen, step: Step) -> None:
-    """Return the canvas to empty so the next sheet does not stack on this one."""
+    """Return the canvas to empty so the next sheet does not stack on this one.
+
+    Ctrl+A followed by Delete is destructive and lands wherever the keyboard
+    focus is, so this refuses to send it unless Design Space is genuinely the
+    foreground window, and it derives the focusing click from that window's own
+    rect instead of a hardcoded screen coordinate.
+
+    It then verifies the canvas really is empty rather than assuming: with
+    nothing on the canvas, Design Space greys out the Make button. If Make is
+    still live, something survived the delete and the next sheet would stack on
+    top of it — so halt rather than quietly corrupt every sheet that follows.
+    """
+    left, top, right, bottom = native.require_design_space_foreground()
+    fx, fy = CANVAS_FOCUS_FRACTION
+    x = left + round((right - left) * fx)
+    y = top + round((bottom - top) * fy)
+
     pyautogui.press("escape")
     time.sleep(0.4)
-    pyautogui.click(*EMPTY_CANVAS_XY)  # give the canvas keyboard focus
+    pyautogui.click(x, y)  # give the canvas keyboard focus
     time.sleep(0.4)
+
+    native.require_design_space_foreground()  # the click must not have raised anything else
     pyautogui.hotkey("ctrl", "a")
     time.sleep(0.4)
     pyautogui.press("delete")
     time.sleep(step.settle)
+
+    screen.require(step.template, timeout=step.timeout)  # Make is greyed => canvas is empty
 
 
 def upload_sheet(screen: Screen, sheet: Path, index: int, total: int) -> None:
@@ -105,14 +139,26 @@ def dry_run(screen: Screen) -> int:
     are good before anything can misfire."""
     print("Dry run — locating each template. Nothing will be clicked.\n")
     seen = 0
+    broken = 0
     for name in TEMPLATES:
-        hit = screen.find(name, timeout=1.0)
+        try:
+            hit = screen.find(name, timeout=1.0)
+        except TemplateNotFound as e:
+            # The template file itself is bad (missing, or a featureless crop).
+            # Report it in the table rather than dying with a traceback — telling
+            # you which templates are usable is this tool's entire job.
+            print(f"  BROKEN    {name:<28} {e}")
+            broken += 1
+            continue
         if hit:
             print(f"  FOUND     {name:<28} confidence={hit[0]:.3f}  at {hit[1]}")
             seen += 1
         else:
             print(f"  not seen  {name:<28}")
     print(f"\n{seen}/{len(TEMPLATES)} templates visible on the current screen.")
+    if broken:
+        print(f"{broken} template(s) are BROKEN and must be re-cropped before running.")
+        return 1
     return 0
 
 
@@ -152,7 +198,8 @@ def main(argv: list[str] | None = None) -> int:
         index = args.start_at + offset
         try:
             upload_sheet(screen, sheet, index, last)
-        except (TemplateNotFound, native.DialogNotFound) as e:
+        except (TemplateNotFound, native.DialogNotFound,
+                native.DesignSpaceNotFocused, RuntimeError) as e:
             print(f"\nerror on {sheet.name}: {e}", file=sys.stderr)
             print(f"Halted. Fix the cause, then resume with --start-at {index}", file=sys.stderr)
             return 1

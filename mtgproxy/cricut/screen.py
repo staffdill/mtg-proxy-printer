@@ -17,7 +17,14 @@ import numpy as np
 import pyautogui
 from PIL import Image
 
-DEFAULT_CONFIDENCE = 0.85
+#: Design Space's buttons are all the same green pill, so in grayscale a whole-pill
+#: crop of "Browse" matches the "Upload" pill on a different screen at 0.96 — near
+#: enough to a true match to be picked in its place. The templates are therefore
+#: cropped to the LABEL TEXT, which is the only thing that actually differs, and
+#: this threshold sits in the gap that opens up: measured true matches are 1.000
+#: and the worst false match across all screens is 0.807 ("Continue" inside
+#: "Apply & Continue"). See test_templates_do_not_collide_with_each_other.
+DEFAULT_CONFIDENCE = 0.90
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 DEBUG_DIR = Path(__file__).resolve().parents[2] / "debug"
 

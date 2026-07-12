@@ -157,3 +157,84 @@ def test_choose_file_raises_when_no_open_dialog_is_up(tmp_path):
     Image.new("RGBA", (8, 8)).save(target)
     with pytest.raises(DialogNotFound):
         choose_file(target, timeout=0.5)
+
+
+# --- safety: the destructive path ------------------------------------------
+
+
+def test_clear_canvas_refuses_to_send_keystrokes_when_design_space_is_not_focused(monkeypatch):
+    # Ctrl+A + Delete goes wherever the keyboard focus is. If Design Space is not
+    # the foreground window, those keys would select and destroy the contents of
+    # whatever IS focused. It must refuse rather than fire blind.
+    from mtgproxy.cricut import native, upload
+
+    monkeypatch.setattr(native, "_window_text", lambda hwnd: "Notepad - untitled")
+
+    pressed = []
+    monkeypatch.setattr(upload.pyautogui, "press", lambda *a, **k: pressed.append(a))
+    monkeypatch.setattr(upload.pyautogui, "hotkey", lambda *a, **k: pressed.append(a))
+    monkeypatch.setattr(upload.pyautogui, "click", lambda *a, **k: pressed.append(a))
+
+    step = flow.Step("clear", "clear_canvas", "20_make_disabled.png")
+    screen = Screen(grab=lambda: Image.new("RGB", (64, 64)))
+
+    with pytest.raises(native.DesignSpaceNotFocused, match="Notepad"):
+        upload.clear_canvas(screen, step)
+
+    assert pressed == [], "not a single key may be sent when the wrong window is focused"
+
+
+def test_preflight_rejects_a_featureless_template(tmp_path, monkeypatch):
+    # A flat crop cannot be matched by normalized correlation, and OpenCV answers
+    # with a confident match at an arbitrary place. preflight is the only thing
+    # that catches this before the run starts clicking.
+    from mtgproxy.cricut import upload
+
+    bad = tmp_path / "templates"
+    bad.mkdir()
+    for name in flow.TEMPLATES:
+        Image.new("RGB", (40, 20), (210, 210, 210)).save(bad / name)  # featureless
+
+    sheets = _sheets(tmp_path, 1)
+    screen = Screen(template_dir=bad, grab=lambda: Image.new("RGB", (64, 64)))
+    with pytest.raises(TemplateNotFound, match="featureless"):
+        upload.preflight(list_sheets(sheets), screen)
+
+
+def test_templates_includes_the_rail_tab_and_the_canvas_empty_check():
+    # Both are loaded at runtime by actions rather than being a step's own
+    # template, so they are exactly the ones a naive TEMPLATES would miss --
+    # and preflight would then not validate them.
+    assert "00_upload_tab.png" in flow.TEMPLATES
+    assert "20_make_disabled.png" in flow.TEMPLATES
+
+
+def test_templates_do_not_collide_with_each_other():
+    """No template may confidently match a DIFFERENT template's button.
+
+    Design Space's buttons are all the same green pill, and a whole-pill crop of
+    "Browse" was measured matching the "Upload" pill on another screen at 0.96 --
+    close enough to a true match to be clicked in its place. Cropping to the label
+    text opened the gap. This guards it: re-crop a template too loosely and this
+    fails, instead of the run clicking the wrong button on a slow render.
+    """
+    from mtgproxy.cricut.screen import DEFAULT_CONFIDENCE
+
+    loaded = {n: Image.open(TEMPLATE_DIR / n).convert("RGB") for n in flow.TEMPLATES}
+    collisions = []
+    for haystack_name, haystack in loaded.items():
+        # Paste the template into a white field so any other template fits inside it.
+        pad = 40
+        field = Image.new(
+            "RGB", (haystack.width + 2 * pad, haystack.height + 2 * pad), (255, 255, 255)
+        )
+        field.paste(haystack, (pad, pad))
+        for needle_name, needle in loaded.items():
+            if needle_name == haystack_name:
+                continue
+            if needle.width > field.width or needle.height > field.height:
+                continue
+            confidence, _ = match(field, needle)
+            if confidence >= DEFAULT_CONFIDENCE:
+                collisions.append(f"{needle_name} matches {haystack_name} at {confidence:.3f}")
+    assert not collisions, "templates collide:\n  " + "\n  ".join(collisions)
