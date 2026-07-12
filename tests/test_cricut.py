@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from PIL import Image, ImageDraw
 
@@ -238,3 +240,89 @@ def test_templates_do_not_collide_with_each_other():
             if confidence >= DEFAULT_CONFIDENCE:
                 collisions.append(f"{needle_name} matches {haystack_name} at {confidence:.3f}")
     assert not collisions, "templates collide:\n  " + "\n  ".join(collisions)
+
+
+# --- printing: picking the right sheet out of the library -------------------
+
+
+def _distinct_sheets(tmp_path, n=4):
+    """Sheets that actually look different, like the real ones do."""
+    d = tmp_path / "sheets"
+    d.mkdir(parents=True, exist_ok=True)
+    palette = [(220, 40, 40), (40, 160, 220), (40, 200, 90), (230, 190, 40)]
+    for i in range(1, n + 1):
+        im = Image.new("RGB", (158, 217), (255, 255, 255))
+        dr = ImageDraw.Draw(im)
+        dr.rectangle([10, 10, 148, 207], fill=palette[(i - 1) % len(palette)])
+        dr.text((20, 100), f"S{i}" * 6, fill=(0, 0, 0))
+        dr.ellipse([30 + 12 * i, 30, 90 + 12 * i, 120], fill=(0, 0, 0))
+        im.save(d / f"sheet_{i:02d}.png")
+    return d
+
+
+def test_locate_sheet_picks_the_right_tile_out_of_a_grid(tmp_path):
+    from mtgproxy.cricut import printing
+
+    d = _distinct_sheets(tmp_path, 4)
+    sheets = list_sheets(d)
+
+    # A fake library: the four sheets laid out in a grid on white.
+    lib = Image.new("RGB", (400, 400), (255, 255, 255))
+    spots = {}
+    for i, s in enumerate(sheets):
+        t = printing.sheet_thumbnail(s)
+        x, y = 30 + (i % 2) * 180, 30 + (i // 2) * 180
+        lib.paste(t, (x, y))
+        spots[s] = (x + t.width // 2, y + t.height // 2)
+
+    screen = Screen(grab=lambda: lib, template_dir=TEMPLATE_DIR)
+    for s in sheets:
+        assert printing.locate_sheet(screen, s, sheets) == spots[s], f"{s.name} landed wrong"
+
+
+def test_locate_sheet_refuses_when_the_sheet_is_not_in_the_library(tmp_path):
+    from mtgproxy.cricut import printing
+
+    d = _distinct_sheets(tmp_path, 4)
+    sheets = list_sheets(d)
+    # A library holding everything EXCEPT sheet_03.
+    lib = Image.new("RGB", (400, 400), (255, 255, 255))
+    for i, s in enumerate(s for s in sheets if s.stem != "sheet_03"):
+        t = printing.sheet_thumbnail(s)
+        lib.paste(t, (30 + (i % 2) * 180, 30 + (i // 2) * 180))
+
+    screen = Screen(grab=lambda: lib, debug_dir=tmp_path / "dbg")
+    missing = next(s for s in sheets if s.stem == "sheet_03")
+    with pytest.raises(printing.WrongSheet):
+        printing.locate_sheet(screen, missing, sheets)
+
+
+def test_print_flow_never_clicks_print_or_go():
+    # The one invariant that costs real money to break.
+    actions = [s.action for s in flow.PRINT_FLOW]
+    assert "gate" in actions
+    assert not any(a in ("print", "send", "go") for a in actions)
+    # The Print button is only ever WAITED for, to learn the printer is ready --
+    # never clicked. If anyone ever wires it to a click, this fails.
+    gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
+    assert gate_step.template == "52_print_ready.png"
+
+    src = (Path(__file__).parent.parent / "mtgproxy" / "cricut" / "printing.py").read_text(
+        encoding="utf-8"
+    )
+    gate_body = src.split("def gate(")[1].split("\ndef ")[0]
+    assert "pyautogui.click" not in gate_body, "the gate must not click anything"
+    assert "screen.click" not in gate_body, "the gate must not click anything"
+
+
+def test_print_flow_sets_width_and_letter_before_it_reaches_the_gate():
+    # Skip either and the sheet prints at the wrong size, or with the registration
+    # marks laid out for A4. Both waste the sheet.
+    names = [s.action for s in flow.PRINT_FLOW]
+    assert names.index("set_width") < names.index("gate")
+    assert names.index("select_letter") < names.index("gate")
+
+
+def test_every_print_template_exists():
+    missing = [t for t in flow.PRINT_TEMPLATES if not (TEMPLATE_DIR / t).is_file()]
+    assert not missing, f"missing print templates: {missing}"

@@ -13,6 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mtgproxy.geometry import MM_PER_INCH, GeometryConfig
+
+#: The sheet geometry the compositor produced. The print flow has to tell Design
+#: Space the same number, so it is derived here rather than typed in twice.
+_CFG = GeometryConfig()
+
 #: Every action name run.py must dispatch on.
 ACTIONS = frozenset(
     {
@@ -29,6 +35,12 @@ class Step:
     name: str
     action: str
     template: str | None = None
+    template_alt: str | None = None
+    #: Click this many pixels from the template's centre. For inputs whose own
+    #: contents change (the width box holds a different number every time), the
+    #: template anchors on the adjacent static label and the offset reaches the
+    #: field itself.
+    click_offset: tuple[int, int] = (0, 0)
     timeout: float = 10.0
     settle: float = 1.0
 
@@ -71,5 +83,66 @@ UPLOAD_FLOW: tuple[Step, ...] = (
 TEMPLATES: tuple[str, ...] = tuple(
     dict.fromkeys(
         [s.template for s in UPLOAD_FLOW if s.template] + ["00_upload_tab.png"]
+    )
+)
+
+
+# --- Printing ---------------------------------------------------------------
+#
+# Per sheet: pull it out of the library, size it, Make It, force Letter, send to
+# the printer — then STOP. The human clicks Print and runs the Cricut. Nothing
+# past the Print Setup dialog is automated, because everything past it spends
+# paper, ink, and a blade.
+
+PRINT_ACTIONS = frozenset(
+    {
+        "ensure_panel",       # the library grid must be showing
+        "place_sheet",        # find THIS sheet's own artwork in the library, click it
+        "click",
+        "set_width",          # the sheet imports at ~10.98in; force it to 5.276in
+        "select_letter",      # Material Size defaults to A4 and must be Letter
+        "ensure_bleed",       # Add Bleed must be ON or the cut shows white edges
+        "gate",               # hand over to the human; never click Print
+        "reset_after_print",  # back to an empty canvas for the next sheet
+    }
+)
+
+#: The sheet is 2 cards wide plus one gap: 2*63 + 8 = 134mm. Design Space ignores
+#: the PNG's DPI and imports it at about 10.98in, so this has to be set by hand.
+SHEET_WIDTH_IN = (
+    _CFG.cols * _CFG.card_w_mm + (_CFG.cols - 1) * _CFG.gap_mm
+) / MM_PER_INCH
+
+PRINT_FLOW: tuple[Step, ...] = (
+    Step("open the library", "ensure_panel", "01_upload_image_btn.png", settle=0.8),
+    # Identified by its own artwork, then re-checked against every other sheet at
+    # the tile it landed on. A mis-pick here prints the wrong card onto real paper.
+    Step("find this sheet in the library", "place_sheet", timeout=20.0, settle=3.5),
+    Step("open the Size popover", "click", "30_size_btn.png", timeout=20.0, settle=1.2),
+    # The width box holds a different number each time, so it cannot be a template.
+    # Anchor on the static "W" label beside it and reach across.
+    Step("set the width", "set_width", "31_width_label.png",
+         click_offset=(38, 0), timeout=15.0, settle=1.5),
+    Step("Make", "click", "21_make_enabled.png", timeout=20.0, settle=6.0),
+    # Design Space defaults Material Size to A4 (8.3 x 11.7in). Our paper is Letter.
+    # Left alone, the registration marks are laid out for the wrong page.
+    Step("set Material Size to Letter", "select_letter", "40_material_size.png",
+         template_alt="41_letter_option.png", click_offset=(0, 36),
+         timeout=25.0, settle=2.5),
+    Step("Continue", "click", "04_continue_btn.png", timeout=25.0, settle=6.0),
+    Step("Send to Printer", "click", "50_send_to_printer.png", timeout=30.0, settle=3.0),
+    # Print Setup. Wait for the Print button to go green — Design Space enumerates
+    # printers slowly and shows "No printers found" first — and assert Add Bleed is
+    # on. Then stop and let the human look at it.
+    Step("hand over at the print dialog", "gate", "52_print_ready.png",
+         template_alt="53_bleed_on.png", timeout=180.0),
+    Step("back to an empty canvas", "reset_after_print", "20_make_disabled.png",
+         template_alt="21_make_enabled.png", timeout=600.0, settle=1.5),
+)
+
+PRINT_TEMPLATES: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        [t for s in PRINT_FLOW for t in (s.template, s.template_alt) if t]
+        + ["00_upload_tab.png", "51_add_bleed.png"]
     )
 )
