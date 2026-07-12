@@ -143,6 +143,7 @@ PRINT_FLOW: tuple[Step, ...] = (
 PRINT_TEMPLATES: tuple[str, ...] = tuple(
     dict.fromkeys(
         [t for s in PRINT_FLOW for t in (s.template, s.template_alt) if t]
-        + ["00_upload_tab.png", "51_add_bleed.png"]
+        + ["00_upload_tab.png", "51_add_bleed.png",
+           "60_make_cancel.png", "61_verify_done.png"]
     )
 )

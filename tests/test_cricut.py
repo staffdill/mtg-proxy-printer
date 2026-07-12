@@ -339,9 +339,14 @@ def test_the_gate_does_print_when_auto_print_is_asked_for(monkeypatch):
     gate_step = next(s for s in flow.PRINT_FLOW if s.action == "gate")
     screen = _FakeScreen()
     printing.gate(screen, gate_step, Path("sheets/sheet_03.png"), 1, 1, auto_print=True)
-    # Prints, then backs out WITHOUT cutting -- the cut happens later, from the
-    # saved project, so it must never reach the Cricut's Go button.
-    assert screen.clicks == ["52_print_ready.png", "60_make_cancel.png"]
+    # Prints, dismisses the "Verify Print Quality" modal Design Space raises once a
+    # sheet has really gone to the printer, then backs out WITHOUT cutting -- the
+    # cut happens later, from the saved project, so it never reaches the Go button.
+    assert screen.clicks == [
+        "52_print_ready.png",
+        "61_verify_done.png",
+        "60_make_cancel.png",
+    ]
 
 
 def test_the_flow_never_presses_go_on_the_cricut():

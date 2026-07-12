@@ -237,6 +237,12 @@ def gate(screen: Screen, step: Step, sheet: Path, index: int, total: int,
                 raise TemplateNotFound("the Print Setup dialog never closed after Print")
             time.sleep(1.0)
         print("      printed — backing out without cutting")
+        # Design Space raises a "Verify Print Quality" modal once the sheet has
+        # actually gone to the printer. It only ever appears after a real print, so
+        # nothing before the first live run could have seen it — and it sits on top
+        # of the Cancel button. Dismiss it first.
+        if screen.find("61_verify_done.png", timeout=20.0):
+            screen.click("61_verify_done.png", timeout=5.0, settle=2.0)
         # Design Space now wants us to cut. We do not: the cut happens later, from
         # the saved project. Cancel back to the canvas.
         screen.click("60_make_cancel.png", timeout=30.0, settle=3.0)
@@ -447,7 +453,20 @@ def main(argv: list[str] | None = None) -> int:
                 native.DesignSpaceNotFocused, RuntimeError) as e:
             n = int(sheet.stem.split("_")[1])
             print(f"\nerror on {sheet.name}: {e}", file=sys.stderr)
-            print(f"Halted. Nothing was printed. Resume with --start-at {n}", file=sys.stderr)
+            if args.auto_print:
+                # Never claim nothing printed when it might have. A failure AFTER the
+                # Print click leaves a sheet in the tray, and telling someone to
+                # resume at N would print it a second time.
+                print(
+                    f"Halted on {sheet.name}. It may ALREADY HAVE PRINTED — check the "
+                    f"printer before resuming, and start at {n + 1} if it did.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"Halted. Nothing was printed. Resume with --start-at {n}",
+                    file=sys.stderr,
+                )
             return 1
 
     print(f"\nDone — {len(todo)} sheet(s).")
