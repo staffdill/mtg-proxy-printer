@@ -43,6 +43,17 @@ class Step:
     click_offset: tuple[int, int] = (0, 0)
     timeout: float = 10.0
     settle: float = 1.0
+    #: A template that must DISAPPEAR for this click to have worked — a witness
+    #: that the screen really advanced. Design Space swallows clicks while it is
+    #: still rendering (and it renders slower the bigger the library gets), and a
+    #: swallowed click is invisible: the flow sails on and dies at the next step,
+    #: looking for a screen it never reached. Set this and the click is retried
+    #: until the witness goes away.
+    #:
+    #: Only for controls that genuinely vanish on success. Browse, for one, does
+    #: NOT — it stays on the page behind its own file dialog, and retrying it
+    #: would open a second one.
+    advances_past: str | None = None
 
 
 UPLOAD_FLOW: tuple[Step, ...] = (
@@ -65,16 +76,27 @@ UPLOAD_FLOW: tuple[Step, ...] = (
     # it explicitly is mandatory: Multiple Layers converts the sheet wrong for
     # Print Then Cut. (Same trap as macOS — it survived the port.)
     Step("Flat Graphic", "click", "06a_flat_graphic.png", timeout=30.0, settle=1.2),
-    Step("Continue (convert)", "click", "04_continue_btn.png", timeout=20.0, settle=2.0),
+    # The Convert screen is still rendering its previews when we get here, and a
+    # Continue clicked too early is simply dropped — observed on sheet 27 of 31,
+    # where the flow then waited 30s for an Upload button on a screen it had never
+    # left. Flat Graphic is the witness: it exists only on the Convert screen, so
+    # while it is still there, Continue has not taken.
+    Step("Continue (convert)", "click", "04_continue_btn.png", timeout=20.0, settle=2.0,
+         advances_past="06a_flat_graphic.png"),
     Step("Upload", "click", "07_upload_btn.png", timeout=30.0, settle=4.0),
     # Design Space drops the uploaded image straight onto the canvas (it does not
     # sit in the library waiting to be added — that is the macOS behaviour). Left
     # there, sheet N+1 would stack on top of sheet N and every later sheet would
     # be wrong. Invariant: the canvas is empty before the next sheet starts.
-    # 20_make_disabled is the POST-condition, not a thing to click: with an empty
-    # canvas Design Space greys the Make button out. If it is still live, something
-    # survived the delete and the next sheet would stack on top of it.
-    Step("clear the canvas", "clear_canvas", "20_make_disabled.png", timeout=15.0, settle=1.5),
+    #
+    # BOTH templates are the canvas's state, neither is a thing to click.
+    # 21_make_enabled (template_alt) is the PRE-condition: Design Space places the
+    # image asynchronously, and until Make goes green it has not landed yet — an
+    # empty canvas at this moment means "not arrived", not "cleared".
+    # 20_make_disabled is the POST-condition: with an empty canvas Make greys out.
+    # If it is still live, something survived the delete.
+    Step("clear the canvas", "clear_canvas", "20_make_disabled.png",
+         template_alt="21_make_enabled.png", timeout=20.0, settle=1.5),
 )
 
 #: Every template file the flow needs, including ones an action reaches for that
@@ -82,7 +104,8 @@ UPLOAD_FLOW: tuple[Step, ...] = (
 #: is the same control on the preview and convert screens.
 TEMPLATES: tuple[str, ...] = tuple(
     dict.fromkeys(
-        [s.template for s in UPLOAD_FLOW if s.template] + ["00_upload_tab.png"]
+        [t for s in UPLOAD_FLOW for t in (s.template, s.template_alt) if t]
+        + ["00_upload_tab.png"]
     )
 )
 
@@ -146,6 +169,6 @@ PRINT_TEMPLATES: tuple[str, ...] = tuple(
         + ["00_upload_tab.png", "51_add_bleed.png",
            "60_make_cancel.png", "61_verify_done.png",
            "62_connect_machine.png", "63_confirm_yes.png",
-           "64_prepare_cancel.png"]
+           "64_prepare_cancel.png", "65_cancel_cut_yes.png"]
     )
 )

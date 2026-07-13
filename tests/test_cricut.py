@@ -280,9 +280,129 @@ def test_locate_sheet_picks_the_right_tile_out_of_a_grid(tmp_path):
         assert printing.locate_sheet(screen, s, sheets) == spots[s], f"{s.name} landed wrong"
 
 
-def test_locate_sheet_refuses_when_the_sheet_is_not_in_the_library(tmp_path):
+def test_clear_canvas_waits_for_the_upload_to_land_before_deleting(monkeypatch):
+    """Design Space places the uploaded image on the canvas ASYNCHRONOUSLY.
+
+    A clear that fires while the canvas is still empty deletes nothing, sees Make
+    greyed out, and declares success — and then the image lands and the next sheet
+    stacks on top of it. That is not hypothetical: it left sheet_11 and sheet_15
+    stranded on the canvas across a real 31-sheet run.
+    """
+    from mtgproxy.cricut import upload
+
+    state = {"landed": False, "deleted": False, "asked": []}
+
+    class _Canvas:
+        confidence = 0.9
+
+        def require(self, name, timeout=10.0):
+            state["asked"].append(name)
+            if name == "21_make_enabled.png":
+                state["landed"] = True  # the image arrives while we are waiting for it
+                if state["deleted"]:
+                    raise TemplateNotFound("canvas is empty")
+                return (0, 0)
+            if name == "20_make_disabled.png":
+                if not state["deleted"]:
+                    raise TemplateNotFound("canvas is not empty")
+                return (0, 0)
+            raise AssertionError(f"unexpected template {name}")
+
+        def find(self, name, timeout=10.0):
+            if name == "21_make_enabled.png" and not state["deleted"]:
+                return (1.0, (0, 0))
+            return None
+
+        def _dump(self, name):
+            pass
+
+    def fake_delete(screen, step):
+        assert state["landed"], "deleted before the image had even landed on the canvas"
+        state["deleted"] = True
+
+    monkeypatch.setattr(upload, "_delete_everything", fake_delete)
+    monkeypatch.setattr(upload.time, "sleep", lambda _s: None)
+    # clear_canvas guards on the REAL foreground window. Without this the test passes
+    # or fails depending on which window the developer happens to have focused.
+    monkeypatch.setattr(
+        upload.native, "require_design_space_foreground", lambda: (0, 0, 100, 100)
+    )
+
+    step = next(s for s in flow.UPLOAD_FLOW if s.action == "clear_canvas")
+    upload.clear_canvas(_Canvas(), step)
+
+    assert state["deleted"], "the canvas was never actually cleared"
+    assert state["asked"][0] == "21_make_enabled.png", (
+        "clear_canvas must confirm the image LANDED before deleting; checking only "
+        "that the canvas is empty passes trivially when the upload is still in flight"
+    )
+
+
+def test_click_step_reclicks_when_design_space_swallowed_the_click():
+    """A click dropped mid-render is silent. Without a witness the flow walks on and
+    dies at the NEXT step, looking for a screen it never reached (observed: sheet 27
+    sat on Convert Upload To while waiting 30s for the Upload button)."""
+    from mtgproxy.cricut import upload
+
+    clicks = []
+    state = {"screen": "convert"}
+
+    class _S:
+        def click(self, name, timeout=10.0, settle=1.0):
+            clicks.append(name)
+            if len(clicks) >= 2:          # the first click is swallowed
+                state["screen"] = "next"
+
+        def find(self, name, timeout=10.0):
+            on_convert = state["screen"] == "convert"
+            return (1.0, (0, 0)) if (name == "06a_flat_graphic.png" and on_convert) else None
+
+        def _dump(self, name):
+            pass
+
+    step = next(s for s in flow.UPLOAD_FLOW if s.name == "Continue (convert)")
+    assert step.advances_past == "06a_flat_graphic.png"
+
+    upload.click_step(_S(), step)
+    assert clicks == ["04_continue_btn.png"] * 2, "must click again when the screen did not move"
+
+
+def test_click_step_gives_up_rather_than_clicking_forever():
+    from mtgproxy.cricut import upload
+
+    clicks = []
+
+    class _S:
+        def click(self, name, timeout=10.0, settle=1.0):
+            clicks.append(name)
+
+        def find(self, name, timeout=10.0):
+            return (1.0, (0, 0))  # the witness never goes away
+
+        def _dump(self, name):
+            pass
+
+    step = next(s for s in flow.UPLOAD_FLOW if s.name == "Continue (convert)")
+    with pytest.raises(TemplateNotFound):
+        upload.click_step(_S(), step)
+    assert len(clicks) == upload.CLICK_ATTEMPTS
+
+
+def _no_real_scrolling(monkeypatch, printing, on_top=None, on_down=None):
+    """Never let a test drive the physical mouse.
+
+    locate_sheet scrolls the real Uploads grid when a sheet is not in view, and a
+    test that reaches that path would move the live pointer and scroll whatever
+    Design Space happens to be showing — on the machine running the tests.
+    """
+    monkeypatch.setattr(printing, "scroll_library_to_top", on_top or (lambda s: None))
+    monkeypatch.setattr(printing, "scroll_library_down", on_down or (lambda s: False))
+
+
+def test_locate_sheet_refuses_when_the_sheet_is_not_in_the_library(tmp_path, monkeypatch):
     from mtgproxy.cricut import printing
 
+    _no_real_scrolling(monkeypatch, printing)
     d = _distinct_sheets(tmp_path, 4)
     sheets = list_sheets(d)
     # A library holding everything EXCEPT sheet_03.
@@ -295,6 +415,50 @@ def test_locate_sheet_refuses_when_the_sheet_is_not_in_the_library(tmp_path):
     missing = next(s for s in sheets if s.stem == "sheet_03")
     with pytest.raises(printing.WrongSheet):
         printing.locate_sheet(screen, missing, sheets)
+
+
+def test_locate_sheet_scrolls_to_reach_a_sheet_below_the_fold(tmp_path, monkeypatch):
+    """The library is taller than its panel. A sheet that is merely scrolled out of
+    view must be FOUND, not reported missing — with 31 sheets uploaded, that is
+    every sheet but the newest few."""
+    from mtgproxy.cricut import printing
+
+    d = _distinct_sheets(tmp_path, 4)
+    sheets = list_sheets(d)
+
+    # One tall column: at most one tile fits in the viewport at a time.
+    tile_pitch, view_h = 180, 200
+    tall = Image.new("RGB", (400, tile_pitch * len(sheets) + 60), (255, 255, 255))
+    spots = {}
+    for i, s in enumerate(sheets):
+        t = printing.sheet_thumbnail(s)
+        x, y = 30, 30 + i * tile_pitch
+        tall.paste(t, (x, y))
+        spots[s] = (x + t.width // 2, y + t.height // 2)
+
+    state = {"offset": 0}
+
+    def grab():
+        return tall.crop((0, state["offset"], 400, state["offset"] + view_h))
+
+    def down(_screen):
+        if state["offset"] + view_h >= tall.height:
+            return False  # the grid stopped moving: the bottom
+        state["offset"] += 50
+        return True
+
+    _no_real_scrolling(
+        monkeypatch, printing,
+        on_top=lambda _s: state.update(offset=0),
+        on_down=down,
+    )
+    screen = Screen(grab=grab, debug_dir=tmp_path / "dbg")
+
+    for s in sheets:
+        state["offset"] = 0
+        x, y = printing.locate_sheet(screen, s, sheets)
+        # Coords come back relative to the viewport, so add back what we scrolled.
+        assert (x, y + state["offset"]) == spots[s], f"{s.name} landed wrong"
 
 
 class _FakeScreen:
@@ -331,6 +495,49 @@ class _FakeScreen:
         # _back_to_canvas clicks the Cancel it just located, rather than searching
         # for it a second time (which races the UI).
         self.clicks.append("60_make_cancel.png")
+
+
+def test_back_to_canvas_answers_the_are_you_sure_you_want_to_cancel_the_cut_banner(monkeypatch):
+    """Cancel does not cancel.
+
+    On the Prepare screen it raises an orange "Are you sure you want to cancel the
+    cut?" banner, and until that is answered Yes, Design Space has not moved. A
+    backout that only knows about Cancel re-clicks it every pass and burns through
+    its attempts without ever reaching the Canvas — which is exactly how a real run
+    got stuck.
+    """
+    from mtgproxy.cricut import printing
+
+    state = {"asked": False, "left": False}
+    clicks = []
+
+    class _S:
+        def find(self, name, timeout=1.0):
+            if "make_disabled" in name or "make_enabled" in name:
+                return (1.0, (0, 0)) if state["left"] else None
+            if "64_prepare_cancel" in name:
+                return None if state["left"] else (1.0, (10, 10))
+            if "60_make_cancel" in name:
+                return None
+            if "65_cancel_cut_yes" in name:
+                return (1.0, (20, 20)) if state["asked"] else None
+            return None
+
+        def click_at(self, x, y, settle=1.0):
+            clicks.append((x, y))
+            if (x, y) == (10, 10):        # Cancel -> only raises the banner
+                state["asked"] = True
+            elif (x, y) == (20, 20):      # Yes -> actually leaves
+                state["left"] = True
+
+        def _dump(self, name):
+            pass
+
+    monkeypatch.setattr(printing.native, "focus_design_space", lambda: (0, 0, 100, 100))
+    printing._back_to_canvas(_S())
+
+    assert (20, 20) in clicks, "never answered the confirmation — Cancel alone does nothing"
+    assert state["left"]
 
 
 def test_the_gate_never_clicks_print_unless_auto_print_was_asked_for(monkeypatch):

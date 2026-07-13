@@ -85,18 +85,22 @@ def ensure_panel(screen: Screen, step: Step) -> None:
         screen.click("00_upload_tab.png", timeout=step.timeout, settle=1.2)
 
 
-def clear_canvas(screen: Screen, step: Step) -> None:
-    """Return the canvas to empty so the next sheet does not stack on this one.
+#: After the canvas reports empty, wait this long and check again. Design Space
+#: places an uploaded image on the canvas ASYNCHRONOUSLY, so "empty" is not proof
+#: of anything until it has had a chance to arrive late.
+LATE_ARRIVAL_GRACE = 3.0
 
-    Ctrl+A followed by Delete is destructive and lands wherever the keyboard
-    focus is, so this refuses to send it unless Design Space is genuinely the
-    foreground window, and it derives the focusing click from that window's own
-    rect instead of a hardcoded screen coordinate.
+#: How many times to delete before giving up on the canvas settling.
+CLEAR_ATTEMPTS = 3
 
-    It then verifies the canvas really is empty rather than assuming: with
-    nothing on the canvas, Design Space greys out the Make button. If Make is
-    still live, something survived the delete and the next sheet would stack on
-    top of it — so halt rather than quietly corrupt every sheet that follows.
+
+def _delete_everything(screen: Screen, step: Step) -> None:
+    """Ctrl+A, Delete — with the foreground guard, because it is destructive.
+
+    Ctrl+A followed by Delete lands wherever the keyboard focus is, so this
+    refuses to send it unless Design Space is genuinely the foreground window,
+    and it derives the focusing click from that window's own rect instead of a
+    hardcoded screen coordinate.
     """
     left, top, right, bottom = native.require_design_space_foreground()
     fx, fy = CANVAS_FOCUS_FRACTION
@@ -114,7 +118,71 @@ def clear_canvas(screen: Screen, step: Step) -> None:
     pyautogui.press("delete")
     time.sleep(step.settle)
 
-    screen.require(step.template, timeout=step.timeout)  # Make is greyed => canvas is empty
+
+def clear_canvas(screen: Screen, step: Step) -> None:
+    """Return the canvas to empty so the next sheet does not stack on this one.
+
+    The subtle part is WHEN. Design Space drops the uploaded image onto the canvas
+    asynchronously, and it can take longer to arrive than the Upload step waits. A
+    clear that fires too early finds a canvas that is empty *because the image has
+    not landed yet*, deletes nothing, sees Make greyed out and declares success —
+    and then the image arrives, and the next sheet stacks on top of it. Every sheet
+    after that is wrong, and the run only notices when something else trips over
+    the mess (observed: uploads 1-15 left sheet_11 and sheet_15 behind, and the
+    Browse click then stopped opening its dialog).
+
+    So this is a TRANSITION, not a check: wait for the image to actually be there
+    (Make goes green), delete it, confirm it is gone (Make greys out) — and then
+    confirm it is STILL gone after a grace period, in case it landed late.
+    """
+    # Before anything else, and before waiting on any template: if Design Space is
+    # not the foreground window then the Ctrl+A + Delete this is building up to
+    # would land in whatever IS focused. Refuse immediately rather than spend the
+    # wait first and discover it at the end.
+    native.require_design_space_foreground()
+
+    for _ in range(CLEAR_ATTEMPTS):
+        # The image must exist before it can be deleted.
+        screen.require(step.template_alt, timeout=step.timeout)  # 21_make_enabled
+        _delete_everything(screen, step)
+        screen.require(step.template, timeout=step.timeout)      # 20_make_disabled => empty
+
+        time.sleep(LATE_ARRIVAL_GRACE)
+        if screen.find(step.template_alt, timeout=1.0) is None:
+            return  # still empty: nothing arrived late, the canvas is genuinely clear
+
+    screen._dump("canvas_would_not_clear")
+    raise TemplateNotFound(
+        f"the canvas kept refilling after {CLEAR_ATTEMPTS} deletes — Design Space is "
+        f"still dropping images onto it, and the next sheet would stack on top"
+    )
+
+
+#: How many times to re-click a control whose screen never advanced.
+CLICK_ATTEMPTS = 3
+
+
+def click_step(screen: Screen, step: Step) -> None:
+    """Click, and — where the step says how — prove the screen actually moved.
+
+    Design Space drops clicks while it is rendering, and says nothing. Without a
+    witness the flow cannot tell a swallowed click from a successful one: it walks
+    on to the next step, looks for a screen it never reached, and blames that.
+    """
+    for attempt in range(1, CLICK_ATTEMPTS + 1):
+        screen.click(step.template, timeout=step.timeout, settle=step.settle)
+        if step.advances_past is None:
+            return  # no witness declared: nothing to verify against
+        if screen.find(step.advances_past, timeout=2.0) is None:
+            return  # the witness is gone: the screen advanced
+        print(f"      still on the same screen (attempt {attempt}/{CLICK_ATTEMPTS}) — "
+              f"Design Space was busy and swallowed the click; clicking again")
+
+    screen._dump(f"stuck_{Path(step.template).stem}")
+    raise TemplateNotFound(
+        f"{step.name!r}: clicked {CLICK_ATTEMPTS} times and {step.advances_past} never "
+        f"went away — Design Space is not leaving this screen"
+    )
 
 
 def upload_sheet(screen: Screen, sheet: Path, index: int, total: int) -> None:
@@ -122,7 +190,7 @@ def upload_sheet(screen: Screen, sheet: Path, index: int, total: int) -> None:
     for step in UPLOAD_FLOW:
         print(f"    {step.name}")
         if step.action == "click":
-            screen.click(step.template, timeout=step.timeout, settle=step.settle)
+            click_step(screen, step)
         elif step.action == "ensure_panel":
             ensure_panel(screen, step)
         elif step.action == "choose_file":

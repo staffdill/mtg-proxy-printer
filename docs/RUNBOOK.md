@@ -21,16 +21,43 @@ Sleeving each proxy with a real card behind it already gives the gloss and the r
 - **No cut template is needed.** The sheets are transparent PNGs and Design Space
   generates the cut lines from the transparency itself.
 
+## One-time printer setup (do this once, not per deck)
+
+Set these in the printer's **Printing Preferences** — the persistent one, reached from
+Windows, *not* the Preferences button inside a print dialog:
+
+```
+rundll32 printui.dll,PrintUIEntry /e /n "HP6C5B66 (HP OfficeJet Pro 8710)"
+```
+
+- **Paper/Quality** → Paper type: **Other matte inkjet papers**, Print quality: **Best**
+- **Advanced** → **Print in Max DPI**
+
+The distinction matters. Settings made through *Preferences inside a print dialog* apply
+to **that one job**, so driving them that way means clicking through four HP driver tabs
+on every sheet of a 31-sheet deck. Set as Windows defaults, every job inherits them and
+the automation never touches the driver at all.
+
+Leave Design Space's **"Use system dialog" OFF**. Turning it on puts the Windows print
+dialog in front of Design Space's own Print Setup, which hides the **Add Bleed** toggle —
+and the print flow refuses to print when it cannot confirm Add Bleed is on (see
+`ensure_bleed`). Correct behaviour, but it halts the run.
+
 ## 1. Generate the sheets
 
 ```
-python -m mtgproxy.cli --input "<mpc-autofill-folder>" --out ./sheets --sticker
+python -m mtgproxy.cli --input "<mpc-autofill-folder>" --out ./sheets-<deck> --sticker
 ```
 
 - 4 cards per sheet. MPC Autofill's `_not_in_list` subfolder is correctly ignored — only
   top-level images are used, so the sheet count reflects the actual decklist.
 - Source images with no bleed: add `--bleed 0`.
 - Exact quantities/order: `--manifest order.txt` (lines `filename.png,quantity`).
+
+**One folder per deck.** Every deck's sheets are named `sheet_01.png` upward, and the
+print flow identifies a sheet by matching its artwork against *its siblings in the
+folder*. Two decks in one folder means two `sheet_01`s and a real chance of printing the
+wrong card onto real paper.
 
 Each sheet is 134 × 184 mm = **5.276 × 7.244 in**. Note that number; Design Space ignores
 the PNG's DPI and you must set the size by hand.
@@ -101,6 +128,11 @@ That is a machine procedure, not a code bug — don't go looking in the Python f
 
 | Symptom | Fix |
 |---|---|
+| A run halts partway with a template it "cannot see" | Usually not a broken template. Design Space **drops clicks while it is rendering**, and it renders slower the bigger your library gets, so the flow walks on and dies at the *next* step looking for a screen it never reached. Look at `debug/`: if the previous screen is still showing, that is what happened. Just resume with `--start-at N`. |
+| Halts on `07_upload_btn` with "Convert Upload To" still on screen | The Continue click was swallowed mid-render. The flow now re-clicks it (`advances_past`), but if it still sticks, resume with `--start-at N`. |
+| Sheets pile up on the canvas (`sheet_11`, `sheet_15`, … in Layers) | Design Space places an uploaded image on the canvas **asynchronously**. A clear that fired before it landed deleted nothing and passed its own check. Fixed — `clear_canvas` now waits for the image to arrive first. If you see this again, the grace period is too short for your machine. |
+| Print flow says a sheet "is not in the library" | The Uploads grid renders **newest first** and scrolls; with a 31-sheet deck, `sheet_01` is ~31 tiles down. The flow scrolls the grid now. If it still cannot find it, the sheet genuinely did not upload — check the library. |
+| Print flow halts waiting for `51_add_bleed` | Something is covering Design Space's Print Setup — usually the Windows system print dialog. Turn **"Use system dialog" off** and set the driver settings as Windows defaults instead (see One-time printer setup). |
 | Upload script halts on a template it cannot see | Design Space auto-updated its UI, or its zoom changed. Look at the screenshot in `debug/`, re-crop that template, resume with `--start-at N`. |
 | Cards printed slightly oversized | Expected before cutting — that's Add Bleed. Measure a cut card. |
 | Cards genuinely oversized after cutting | The canvas width wasn't set to 5.276 in. |
@@ -116,17 +148,24 @@ That is a machine procedure, not a code bug — don't go looking in the Python f
 # Upload sheets into the Cricut library
 python -m mtgproxy.cricut.upload --sheets ./sheets
 
-# Build ONE project holding every sheet -- this is what you open elsewhere to CUT
-python -m mtgproxy.cricut.printing --sheets ./sheets --build-project
-# then rename the project by hand (Auto Save saves it; there is no save dialog)
-
 # Print. Default stops at the Print Setup dialog for you to click Print.
 python -m mtgproxy.cricut.printing --sheets ./sheets
 # ...or print unattended. Load enough matte stock for EVERY sheet first.
 python -m mtgproxy.cricut.printing --sheets ./sheets --auto-print
 
+# Build ONE project holding every sheet -- this is what you open elsewhere to CUT.
+# Do this LAST. See the warning below.
+python -m mtgproxy.cricut.printing --sheets ./sheets --build-project
+# then rename the project by hand (Auto Save saves it; there is no save dialog)
+
 # Any of them: --dry-run locates templates and clicks nothing; --start-at N resumes.
 ```
+
+**Build the project LAST, after printing — never before.** `--build-project` leaves all
+the sheets on the canvas and Auto Save persists that as the project. But `printing.py`
+starts every run with `reset_after_print`, which does Ctrl+A + Delete on whatever canvas
+is showing. Print after building and you wipe the project you just built. If you must
+print after building, open a **new blank canvas** first.
 
 Do not touch the mouse while these run. A screen corner aborts.
 

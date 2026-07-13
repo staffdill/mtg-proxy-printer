@@ -51,6 +51,61 @@ class WrongSheet(RuntimeError):
     """
 
 
+#: The Uploads grid is a SCROLLING panel, and it renders newest-first. A 31-sheet
+#: deck does not fit in it: sheet_01 ends up ~31 tiles down, far below the fold,
+#: and matching only against what happens to be visible would report it as missing
+#: when it is merely scrolled out of view. So the grid gets scanned, not glanced at.
+#: Both are fractions of the live Design Space window rather than screen pixels, so
+#: moving or resizing the window cannot send the scroll into another application.
+LIBRARY_HOVER_FRACTION = (0.09, 0.50)
+LIBRARY_PANEL_FRACTION = (0.03, 0.12, 0.16, 0.96)
+
+#: One wheel step down. The scan stops when the grid STOPS MOVING, not after a
+#: fixed count — the count is only a backstop against scrolling forever.
+SCROLL_NOTCHES = -300
+MAX_SCROLLS = 60
+
+
+def _library_region(screen: Screen) -> tuple[int, int, int, int]:
+    """The Uploads grid, in screenshot pixels, from the live window rect."""
+    left, top, right, bottom = native.require_design_space_foreground()
+    w, h = right - left, bottom - top
+    fl, ft, fr, fb = LIBRARY_PANEL_FRACTION
+    s = screen.scale()
+    return (
+        round((left + w * fl) * s), round((top + h * ft) * s),
+        round((left + w * fr) * s), round((top + h * fb) * s),
+    )
+
+
+def _hover_library() -> None:
+    left, top, right, bottom = native.require_design_space_foreground()
+    fx, fy = LIBRARY_HOVER_FRACTION
+    pyautogui.moveTo(left + round((right - left) * fx), top + round((bottom - top) * fy))
+
+
+def scroll_library_to_top(screen: Screen) -> None:
+    """Rewind the grid so a scan starts from a known place."""
+    _hover_library()
+    for _ in range(MAX_SCROLLS):
+        pyautogui.scroll(600)
+    time.sleep(1.0)
+
+
+def scroll_library_down(screen: Screen) -> bool:
+    """One step down. False once the grid stops changing — that is the bottom.
+
+    Comparing the panel's own pixels is what detects the end. A scroll count
+    cannot: the library grows every time a deck is uploaded.
+    """
+    region = _library_region(screen)
+    before = screen.grab().crop(region).tobytes()
+    _hover_library()
+    pyautogui.scroll(SCROLL_NOTCHES)
+    time.sleep(0.8)
+    return screen.grab().crop(region).tobytes() != before
+
+
 def sheet_thumbnail(sheet: Path, width: int = THUMBNAIL_W) -> Image.Image:
     """The sheet as the library draws it: flattened onto white, scaled down.
 
@@ -68,8 +123,10 @@ def sheet_thumbnail(sheet: Path, width: int = THUMBNAIL_W) -> Image.Image:
     return flat.resize((width, round(width * src.height / src.width)), Image.LANCZOS)
 
 
-def locate_sheet(screen: Screen, sheet: Path, siblings: list[Path]) -> tuple[int, int]:
-    """Find this sheet's tile in the library — and prove it is really this sheet.
+def identify_tile(
+    screen: Screen, sheet: Path, siblings: list[Path]
+) -> tuple[tuple[int, int] | None, str | None]:
+    """Is this sheet on screen RIGHT NOW, beyond doubt? (centre, None) if so.
 
     Two checks, because the whole library is a grid of near-identical 4-up card
     sheets. First the sheet's own artwork must match somewhere with enough
@@ -77,17 +134,19 @@ def locate_sheet(screen: Screen, sheet: Path, siblings: list[Path]) -> tuple[int
     sheet by a clear margin. The second check is the one that matters: it is what
     turns "this looks like sheet 7" into "nothing else looks more like this tile
     than sheet 7 does".
+
+    Anything short of both checks returns (None, why) and is the caller's cue to
+    keep scrolling, NOT a click. That distinction is the whole point: while
+    scanning past sheet_01 looking for sheet_02, sheet_02's artwork really does
+    match sheet_01's tile above the confidence gate — it just loses the margin
+    check. Refusing to click it is mandatory; refusing to carry on looking would
+    abort a run over a tile we were only passing by.
     """
     shot = screen.grab()
     needle = sheet_thumbnail(sheet)
     confidence, centre = match(shot, needle)
     if confidence < THUMBNAIL_CONFIDENCE:
-        screen._dump(f"thumb_{sheet.stem}")
-        raise WrongSheet(
-            f"{sheet.name} is not in the visible library (best match {confidence:.3f} "
-            f"< {THUMBNAIL_CONFIDENCE}). Scroll the library so it is showing, or "
-            f"upload it first."
-        )
+        return None, None  # simply not in view
 
     cx, cy = centre
     pad = 6
@@ -109,24 +168,53 @@ def locate_sheet(screen: Screen, sheet: Path, siblings: list[Path]) -> tuple[int
 
     best_score, best_sheet = scores[0]
     if best_sheet != sheet:
-        screen._dump(f"wrongtile_{sheet.stem}")
-        raise WrongSheet(
+        return None, (
             f"the tile at {centre} looks more like {best_sheet.name} "
-            f"({best_score:.3f}) than {sheet.name} — refusing to print it"
+            f"({best_score:.3f}) than {sheet.name}"
         )
     runner_up = scores[1][0] if len(scores) > 1 else 0.0
     margin = best_score - runner_up
     if margin < MIN_THUMBNAIL_MARGIN:
-        screen._dump(f"ambiguous_{sheet.stem}")
-        raise WrongSheet(
+        return None, (
             f"the tile at {centre} is ambiguous: {sheet.name} scores {best_score:.3f} "
             f"but {scores[1][1].name} scores {runner_up:.3f} (margin {margin:.3f} < "
-            f"{MIN_THUMBNAIL_MARGIN}) — refusing to print it"
+            f"{MIN_THUMBNAIL_MARGIN})"
         )
 
     print(f"      matched {sheet.name} at {centre} "
           f"(confidence {confidence:.3f}, margin over next-best {margin:+.3f})")
-    return centre
+    return centre, None
+
+
+def locate_sheet(screen: Screen, sheet: Path, siblings: list[Path]) -> tuple[int, int]:
+    """Find this sheet's tile, scrolling the Uploads grid until it shows up.
+
+    Checks the current view first — consecutive sheets are usually neighbours in
+    the grid, so the common case costs no scrolling at all. Only on a miss does it
+    rewind to the top and walk down. Reaching the bottom without ever seeing the
+    sheet is fatal: it means the sheet is genuinely not in the library, and the
+    only thing left to click would be some other deck's card.
+    """
+    hit, why = identify_tile(screen, sheet, siblings)
+    if hit:
+        return hit
+
+    print(f"      not in view — scanning the library for {sheet.name}")
+    scroll_library_to_top(screen)
+    for _ in range(MAX_SCROLLS):
+        hit, reason = identify_tile(screen, sheet, siblings)
+        if hit:
+            return hit
+        why = reason or why  # keep the most informative thing we saw
+        if not scroll_library_down(screen):
+            break  # the grid stopped moving: that was the bottom
+
+    screen._dump(f"thumb_{sheet.stem}")
+    raise WrongSheet(
+        f"{sheet.name} is not in the library — scanned the whole Uploads grid, top "
+        f"to bottom, and never identified it beyond doubt. Upload it first."
+        + (f" (closest call: {why})" if why else "")
+    )
 
 
 def place_sheet(screen: Screen, step: Step, sheet: Path, siblings: list[Path]) -> None:
@@ -278,6 +366,14 @@ def _back_to_canvas(screen: Screen, attempts: int = 4) -> None:
         # UI: Design Space can move on between the two lookups, and then the click
         # raises even though the Cancel it was told about was real.
         screen.click_at(*hit[1], settle=4.0)
+
+        # Cancel does not cancel. It raises an orange "Are you sure you want to
+        # cancel the cut?" banner, and until that is answered we are still on the
+        # Prepare screen — so the next pass finds Cancel again, clicks it again, and
+        # the loop burns its attempts without ever leaving.
+        confirm = screen.find("65_cancel_cut_yes.png", timeout=4.0)
+        if confirm:
+            screen.click_at(*confirm[1], settle=4.0)
     if not _on_canvas(screen, timeout=6.0):
         screen._dump("stuck_after_print")
         raise TemplateNotFound(
