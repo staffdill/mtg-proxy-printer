@@ -254,9 +254,19 @@ def test_build_queue_uses_fifo_order(tmp_path):
 
     cat.build_queue("reprints", tmp_path / "out")
 
+    built_names = {
+        r["name"] for r in cat.conn.execute(
+            "SELECT DISTINCT cards.name FROM sheet_contents "
+            "JOIN cards ON cards.id = sheet_contents.card_id "
+            "WHERE sheet_contents.deck_or_queue = 'reprints'"
+        ).fetchall()
+    }
+    assert built_names == {"Card A", "Card B", "Card C", "Card D"}
+
+    # queue_items is untouched by build_queue -- all 5 are still queued,
+    # draining only happens when printing.py confirms an actual print.
     remaining = cat.list_queue("reprints")
-    assert len(remaining) == 1
-    assert remaining[0][0].name == "Card E"
+    assert len(remaining) == 5
 
 
 def test_build_queue_does_not_touch_queue_items(tmp_path):
@@ -269,6 +279,28 @@ def test_build_queue_does_not_touch_queue_items(tmp_path):
 
     remaining = cat.list_queue("reprints")
     assert len(remaining) == 4
+
+
+def test_build_queue_does_not_lose_quantity_when_a_card_straddles_the_leftover_boundary(tmp_path):
+    """A single queue_items row can have quantity > 1. If build_queue only
+    builds PART of that quantity (some copies land in a full sheet, the rest
+    are the leftover), it must not touch that row at all -- draining only
+    happens at print time, and it must never lose track of how many copies
+    are still queued."""
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path, name="Sol Ring", color="red")
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", src)
+    cat.add_to_queue("reprints", qty=5, name="Sol Ring", variant_label="chocobo-deck")
+
+    result = cat.build_queue("reprints", tmp_path / "out")
+
+    assert result.built_cards == 4
+    assert result.leftover_cards == 1
+    remaining = cat.list_queue("reprints")
+    assert len(remaining) == 1
+    card, qty = remaining[0]
+    assert card.name == "Sol Ring"
+    assert qty == 5  # untouched -- draining happens at print time, not build time
 
 
 def test_build_queue_records_sheet_contents_for_the_built_sheet(tmp_path):

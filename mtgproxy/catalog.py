@@ -323,15 +323,5 @@ class Catalog:
                     (queue_name, sheet_path.name, position, card_id),
                 )
 
-        # If there are leftover cards, delete the built rows so the queue only shows
-        # what still needs to be built. If there are no leftovers, keep the rows.
-        if leftover:
-            built_card_ids = {card_id for card_id, _ in to_build}
-            for card_id in built_card_ids:
-                self.conn.execute(
-                    "DELETE FROM queue_items WHERE card_id = ? AND queue_name = ?",
-                    (card_id, queue_name),
-                )
-
         self.conn.commit()
         return BuildResult(sheets=written, built_cards=len(to_build), leftover_cards=len(leftover))
