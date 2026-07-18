@@ -325,3 +325,56 @@ class Catalog:
 
         self.conn.commit()
         return BuildResult(sheets=written, built_cards=len(to_build), leftover_cards=len(leftover))
+
+    def record_print(self, deck_or_queue: str, sheet_file: str) -> None:
+        """Log a real, successful print. Called from printing.py's existing
+        per-sheet success point -- never from anywhere speculative.
+
+        Raises SheetNotCatalogued if this sheet has no sheet_contents rows
+        (an old deck printed before the catalog existed, or a hand-built
+        sheet). The caller (printing.py) treats that as soft-fail: warn and
+        keep going, never halt a live print run over bookkeeping.
+        """
+        rows = self.conn.execute(
+            "SELECT card_id FROM sheet_contents WHERE deck_or_queue = ? AND sheet_file = ?",
+            (deck_or_queue, sheet_file),
+        ).fetchall()
+        if not rows:
+            raise SheetNotCatalogued(
+                f"no sheet_contents for {deck_or_queue}/{sheet_file} -- "
+                "printed outside the catalogued flow"
+            )
+
+        now = _now()
+        counts: dict[int, int] = {}
+        for row in rows:
+            card_id = row["card_id"]
+            counts[card_id] = counts.get(card_id, 0) + 1
+            image_path = self.conn.execute(
+                "SELECT image_path FROM cards WHERE id = ?", (card_id,)
+            ).fetchone()["image_path"]
+            self.conn.execute(
+                """
+                INSERT INTO print_history
+                    (card_id, deck_or_queue, sheet_file, image_snapshot_path, printed_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (card_id, deck_or_queue, sheet_file, image_path, now),
+            )
+            self.conn.execute(
+                "UPDATE cards SET times_printed = times_printed + 1, last_printed_at = ? "
+                "WHERE id = ?",
+                (now, card_id),
+            )
+
+        for card_id, count in counts.items():
+            self.conn.execute(
+                "UPDATE queue_items SET quantity = quantity - ? "
+                "WHERE card_id = ? AND queue_name = ?",
+                (count, card_id, deck_or_queue),
+            )
+            self.conn.execute(
+                "DELETE FROM queue_items WHERE card_id = ? AND queue_name = ? AND quantity <= 0",
+                (card_id, deck_or_queue),
+            )
+        self.conn.commit()

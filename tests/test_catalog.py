@@ -316,3 +316,92 @@ def test_build_queue_records_sheet_contents_for_the_built_sheet(tmp_path):
     assert result.sheets[0].name in {r["sheet_file"] for r in cat.conn.execute(
         "SELECT DISTINCT sheet_file FROM sheet_contents"
     ).fetchall()}
+
+
+# Task 4: record_print -- automatic print history + queue draining
+
+
+from mtgproxy.catalog import SheetNotCatalogued
+
+
+def test_record_print_raises_when_the_sheet_was_never_catalogued(tmp_path):
+    cat = _catalog(tmp_path)
+
+    with pytest.raises(SheetNotCatalogued):
+        cat.record_print("sheets-test", "sheet_99.png")
+
+
+def test_record_print_bumps_times_printed_and_logs_history(tmp_path):
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path)
+    cat.catalog_sheet([src], deck_or_queue="sheets-test", sheet_file="sheet_01.png")
+
+    cat.record_print("sheets-test", "sheet_01.png")
+
+    card = cat.resolve(name="Sol Ring", variant_label="sheets-test")
+    assert card.times_printed == 1
+    assert card.last_printed_at is not None
+    history = cat.history(card_id=card.id)
+    assert len(history) == 1
+    assert history[0]["sheet_file"] == "sheet_01.png"
+
+
+def test_record_print_counts_the_same_card_twice_if_it_appears_twice_on_a_sheet(tmp_path):
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path)
+    cat.catalog_sheet([src, src], deck_or_queue="sheets-test", sheet_file="sheet_01.png")
+
+    cat.record_print("sheets-test", "sheet_01.png")
+
+    card = cat.resolve(name="Sol Ring", variant_label="sheets-test")
+    assert card.times_printed == 2
+
+
+def test_record_print_drains_a_matching_queue(tmp_path):
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", src)
+    cat.add_to_queue("reprints", qty=2, name="Sol Ring", variant_label="chocobo-deck")
+    # Simulate build_queue putting ONE copy of it on a sheet.
+    card = cat.resolve(name="Sol Ring", variant_label="chocobo-deck")
+    cat.conn.execute(
+        "INSERT INTO sheet_contents (deck_or_queue, sheet_file, position, card_id) "
+        "VALUES ('reprints', 'sheet_01.png', 0, ?)",
+        (card.id,),
+    )
+    cat.conn.commit()
+
+    cat.record_print("reprints", "sheet_01.png")
+
+    remaining = cat.list_queue("reprints")
+    assert len(remaining) == 1
+    assert remaining[0][1] == 1  # 2 - 1 printed = 1 left
+
+
+def test_record_print_deletes_the_queue_row_once_fully_printed(tmp_path):
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", src)
+    cat.add_to_queue("reprints", qty=1, name="Sol Ring", variant_label="chocobo-deck")
+    card = cat.resolve(name="Sol Ring", variant_label="chocobo-deck")
+    cat.conn.execute(
+        "INSERT INTO sheet_contents (deck_or_queue, sheet_file, position, card_id) "
+        "VALUES ('reprints', 'sheet_01.png', 0, ?)",
+        (card.id,),
+    )
+    cat.conn.commit()
+
+    cat.record_print("reprints", "sheet_01.png")
+
+    assert cat.list_queue("reprints") == []
+
+
+def test_record_print_on_an_ordinary_deck_does_not_touch_any_queue(tmp_path):
+    """deck_or_queue for a normal deck build is a deck folder name, not a
+    queue -- there's nothing in queue_items for it, and that must be a no-op,
+    not an error."""
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path)
+    cat.catalog_sheet([src], deck_or_queue="sheets-chocobo", sheet_file="sheet_01.png")
+
+    cat.record_print("sheets-chocobo", "sheet_01.png")  # must not raise
