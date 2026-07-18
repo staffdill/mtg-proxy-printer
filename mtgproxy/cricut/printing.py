@@ -23,6 +23,7 @@ from pathlib import Path
 import pyautogui
 from PIL import Image
 
+from mtgproxy.catalog import DEFAULT_DB_PATH, DEFAULT_IMAGES_DIR, Catalog, SheetNotCatalogued
 from mtgproxy.cricut import native
 from mtgproxy.cricut.flow import PRINT_FLOW, PRINT_TEMPLATES, SHEET_WIDTH_IN, Step
 from mtgproxy.cricut.screen import Screen, TemplateNotFound, match
@@ -497,6 +498,22 @@ def print_sheet(screen: Screen, sheet: Path, siblings: list[Path], index: int, t
             raise RuntimeError(f"unknown action {step.action!r} in step {step.name!r}")
 
 
+def _record_print(cat: Catalog, deck_or_queue: str, sheet_file: str) -> None:
+    """Log a sheet's real, successful print in the catalog.
+
+    Never lets catalog bookkeeping break a live print run: a sheet printed
+    outside the catalogued flow (an old deck, a hand-built sheet) just warns
+    and moves on, and so does any other catalog error -- the print already
+    happened, real paper and ink are already spent, and nothing here should
+    be able to turn that into a crashed run.
+    """
+    try:
+        cat.record_print(deck_or_queue, sheet_file)
+    except SheetNotCatalogued as e:
+        print(f"      catalog: {e}")
+    except Exception as e:  # noqa: BLE001 -- deliberately broad, see docstring
+        print(f"      catalog: unexpected error recording print history: {e}")
+
 
 def build_project(screen: Screen, sheets: list[Path], everything: list[Path]) -> None:
     """Place every sheet onto ONE canvas, each sized to 5.276in, and stop.
@@ -545,6 +562,14 @@ def main(argv: list[str] | None = None) -> int:
         "--auto-print", action="store_true",
         help="Click Print automatically instead of handing over. Spends paper and ink "
              "unattended — make sure the tray holds enough matte stock for every sheet.",
+    )
+    parser.add_argument(
+        "--catalog-db", default=str(DEFAULT_DB_PATH), help="Card catalog database path."
+    )
+    parser.add_argument(
+        "--catalog-images-dir",
+        default=str(DEFAULT_IMAGES_DIR),
+        help="Card catalog's owned image storage.",
     )
     args = parser.parse_args(argv)
 
@@ -619,9 +644,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: could not get to an empty canvas: {e}", file=sys.stderr)
         return 1
 
+    cat = Catalog(db_path=Path(args.catalog_db), images_dir=Path(args.catalog_images_dir))
     for i, sheet in enumerate(todo, start=1):
         try:
             print_sheet(screen, sheet, everything, i, len(todo), auto_print=args.auto_print)
+            _record_print(cat, folder.name, sheet.name)
         except (TemplateNotFound, WrongSheet, native.DialogNotFound,
                 native.DesignSpaceNotFocused, RuntimeError) as e:
             n = int(sheet.stem.split("_")[1])

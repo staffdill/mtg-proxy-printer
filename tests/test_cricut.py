@@ -679,3 +679,33 @@ def test_reset_backs_out_of_the_make_flow_before_looking_for_the_canvas(monkeypa
     assert screen.clicks.count("60_make_cancel.png") == 2, (
         "reset must cancel its way back to the Canvas before hunting for the Make button"
     )
+
+
+# --- printing: catalog integration ------------------------------------------
+
+
+def test_record_print_warns_but_does_not_raise_for_an_uncatalogued_sheet(tmp_path, capsys):
+    from mtgproxy.cricut import printing
+    from mtgproxy.catalog import Catalog
+
+    cat = Catalog(db_path=tmp_path / "catalog.db", images_dir=tmp_path / "images")
+
+    printing._record_print(cat, "sheets-onepiece", "sheet_01.png")  # never catalogued
+
+    assert "catalog" in capsys.readouterr().out.lower()
+
+
+def test_record_print_logs_history_for_a_catalogued_sheet(tmp_path):
+    from mtgproxy.cricut import printing
+    from mtgproxy.catalog import Catalog
+    from PIL import Image
+
+    cat = Catalog(db_path=tmp_path / "catalog.db", images_dir=tmp_path / "images")
+    img = tmp_path / "Sol Ring.png"
+    Image.new("RGB", (60, 84), "red").save(img)
+    cat.catalog_sheet([img], deck_or_queue="sheets-test", sheet_file="sheet_01.png")
+
+    printing._record_print(cat, "sheets-test", "sheet_01.png")
+
+    card = cat.resolve(name="Sol Ring", variant_label="sheets-test")
+    assert card.times_printed == 1
