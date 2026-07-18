@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}History — {{ card.name }}{% endblock %}
+{% block content %}
+<h1>{{ card.name }} <span class="muted">({{ card.variant_label }})</span></h1>
+<p class="muted">Printed {{ card.times_printed }}× · last {{ card.last_printed_at or 'never' }}</p>
+{% if not entries %}
+  <p class="muted">Never printed.</p>
+{% else %}
+  <ul class="history">
+  {% for e in entries %}
+    <li>
+      <time>{{ e.row['printed_at'] }}</time>
+      {{ e.row['deck_or_queue'] }} / {{ e.row['sheet_file'] }}
+    </li>
+  {% endfor %}
+  </ul>
+{% endif %}
+<p><a href="{{ url_for('main.search', q=card.name) }}">Back to search</a></p>
+{% endblock %}

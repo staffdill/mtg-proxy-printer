@@ -179,3 +179,23 @@ def test_build_queue_writes_sheet(tmp_path):
     out = Path(app.config["SHEETS_ROOT"]) / "sheets-reprints"
     assert any(out.glob("sheet*.png"))
     assert b"--queue reprints" in resp.data
+
+
+def test_history_lists_print(tmp_path):
+    app, client = _client(tmp_path)
+    cat = app.extensions["catalog"]
+    src = _card_png(tmp_path / "Sol Ring.png")
+    cat.catalog_sheet([src], deck_or_queue="sheets-test", sheet_file="sheet_01.png")
+    cat.record_print("sheets-test", "sheet_01.png")
+    card = cat.resolve(name="Sol Ring", variant_label="sheets-test")
+    _login(client)
+    resp = client.get(f"/cards/{card.id}/history")
+    assert resp.status_code == 200
+    assert b"sheet_01.png" in resp.data
+    assert b"sheets-test" in resp.data
+
+
+def test_history_unknown_card_404(tmp_path):
+    _, client = _client(tmp_path)
+    _login(client)
+    assert client.get("/cards/99999/history").status_code == 404

@@ -106,8 +106,17 @@ def build_queue(queue_name: str):
 
 @bp.get("/cards/<int:card_id>/history")
 @login_required
-def history(card_id):
-    return f"history {card_id}"
+def history(card_id: int):
+    try:
+        card = _catalog().resolve(card_id=card_id)
+    except CardNotFound:
+        abort(404)
+    rows = _catalog().history(card_id=card_id)
+    enriched = []
+    for r in rows:
+        snap = Path(r["image_snapshot_path"])
+        enriched.append({"row": r, "snap_ok": snap.is_file()})
+    return render_template("history.html", card=card, entries=enriched)
 
 
 @bp.get("/images/cards/<int:card_id>")
