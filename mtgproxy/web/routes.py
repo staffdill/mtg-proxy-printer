@@ -14,7 +14,7 @@ from flask import (
     url_for,
 )
 
-from mtgproxy.catalog import CardNotFound
+from mtgproxy.catalog import CardNotFound, InvalidQuantity
 from mtgproxy.web.auth import login_required
 
 bp = Blueprint("main", __name__)
@@ -53,14 +53,27 @@ def search():
 @bp.post("/queue/add")
 @login_required
 def add_to_queue():
-    flash("Add not implemented yet")
-    return redirect(url_for("main.search"))
+    try:
+        card_id = int(request.form.get("card_id", ""))
+        qty = int(request.form.get("qty", "1"))
+    except ValueError:
+        flash("Invalid card or quantity.")
+        return redirect(url_for("main.search"))
+    queue_name = (request.form.get("queue_name") or "reprints").strip() or "reprints"
+    try:
+        card = _catalog().add_to_queue(queue_name, qty=qty, card_id=card_id)
+    except (CardNotFound, InvalidQuantity) as e:
+        flash(str(e))
+        return redirect(url_for("main.search", q=request.form.get("q", "")))
+    flash(f"Added {qty}× {card.name} ({card.variant_label}) to {queue_name!r}.")
+    return redirect(url_for("main.queue", queue_name=queue_name))
 
 
 @bp.get("/queues/<queue_name>")
 @login_required
-def queue(queue_name):
-    return f"queue {queue_name}"
+def queue(queue_name: str):
+    items = _catalog().list_queue(queue_name)
+    return render_template("queue.html", queue_name=queue_name, items=items, build_result=None)
 
 
 @bp.get("/cards/<int:card_id>/history")

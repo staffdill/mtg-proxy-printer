@@ -137,3 +137,28 @@ def test_snapshot_path_traversal_rejected(tmp_path):
     _login(client)
     resp = client.get("/images/snapshots/../../outside.png")
     assert resp.status_code in (400, 404)
+
+
+def test_add_to_queue_by_id(tmp_path):
+    app, client = _client(tmp_path)
+    cid = _seed_card(tmp_path, app)
+    _login(client)
+    resp = client.post(
+        "/queue/add",
+        data={"card_id": cid, "qty": 2, "queue_name": "reprints"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    assert b"Sol Ring" in resp.data
+    assert b"2" in resp.data
+    items = app.extensions["catalog"].list_queue("reprints")
+    assert len(items) == 1
+    assert items[0][1] == 2
+
+
+def test_add_rejects_qty_zero(tmp_path):
+    app, client = _client(tmp_path)
+    cid = _seed_card(tmp_path, app)
+    _login(client)
+    client.post("/queue/add", data={"card_id": cid, "qty": 0, "queue_name": "reprints"})
+    assert app.extensions["catalog"].list_queue("reprints") == []

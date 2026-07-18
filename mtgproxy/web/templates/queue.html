@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Queue {{ queue_name }}{% endblock %}
+{% block content %}
+<h1>Queue: {{ queue_name }}</h1>
+{% if not items %}
+  <p class="muted">This queue is empty.</p>
+{% else %}
+  <ul>
+  {% for card, qty in items %}
+    <li>{{ qty }}× {{ card.name }} ({{ card.variant_label }})</li>
+  {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}
