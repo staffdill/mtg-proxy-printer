@@ -115,3 +115,25 @@ def test_search_empty_query_does_not_dump_catalog(tmp_path):
     resp = client.get("/search?q=")
     assert resp.status_code == 200
     assert b"Sol Ring" not in resp.data
+
+
+def test_card_image_returns_png(tmp_path):
+    app, client = _client(tmp_path)
+    cid = _seed_card(tmp_path, app)
+    _login(client)
+    resp = client.get(f"/images/cards/{cid}")
+    assert resp.status_code == 200
+    assert resp.content_type.startswith("image/")
+
+
+def test_card_image_unknown_id_is_404(tmp_path):
+    _, client = _client(tmp_path)
+    _login(client)
+    assert client.get("/images/cards/99999").status_code == 404
+
+
+def test_snapshot_path_traversal_rejected(tmp_path):
+    _, client = _client(tmp_path)
+    _login(client)
+    resp = client.get("/images/snapshots/../../outside.png")
+    assert resp.status_code in (400, 404)
