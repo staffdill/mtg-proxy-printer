@@ -15,8 +15,9 @@ def create_app(config: dict | None = None) -> Flask:
     if not password:
         raise ValueError("web UI password is required (set PASSWORD / MTGPROXY_WEB_PASSWORD)")
 
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["SECRET_KEY"] = cfg.get("SECRET_KEY") or "dev-only-change-me"
+
     app.config["PASSWORD"] = password
     app.config["DB_PATH"] = Path(cfg.get("DB_PATH", "catalog.db"))
     app.config["IMAGES_DIR"] = Path(cfg.get("IMAGES_DIR", "catalog/images"))

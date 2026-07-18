@@ -56,3 +56,32 @@ def test_unauthenticated_root_redirects_to_login(tmp_path):
     resp = client.get("/")
     assert resp.status_code == 302
     assert "/login" in resp.headers["Location"]
+
+
+def test_wrong_password_stays_on_login(tmp_path):
+    _, client = _client(tmp_path, password="correct")
+    resp = client.post("/login", data={"password": "wrong"}, follow_redirects=True)
+    assert resp.status_code == 200
+    assert b"wrong" in resp.data.lower() or b"invalid" in resp.data.lower()
+    # Still cannot see search
+    resp2 = client.get("/")
+    assert resp2.status_code == 302
+
+
+def test_correct_password_reaches_search(tmp_path):
+    _, client = _client(tmp_path, password="correct")
+    resp = client.post("/login", data={"password": "correct"}, follow_redirects=True)
+    assert resp.status_code == 200
+    # After Task 4 this is the real search page; for now any 200 after login is ok
+    # if root is no longer a redirect:
+    resp2 = client.get("/")
+    assert resp2.status_code == 200
+
+
+def test_logout_clears_session(tmp_path):
+    _, client = _client(tmp_path, password="correct")
+    client.post("/login", data={"password": "correct"})
+    client.get("/logout")
+    resp = client.get("/")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]

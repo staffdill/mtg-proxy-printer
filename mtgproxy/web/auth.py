@@ -1,6 +1,18 @@
+from __future__ import annotations
+
+import hmac
 from functools import wraps
 
-from flask import Blueprint, current_app, redirect, request, session, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -15,19 +27,26 @@ def login_required(view):
     return wrapped
 
 
-@auth_bp.get("/login")
+@auth_bp.route("/login", methods=["GET", "POST"])
 def login():
-    from flask import render_template_string
-    return render_template_string("<h1>login stub</h1>"), 200
+    if session.get("logged_in"):
+        return redirect(url_for("main.search"))
+    error = None
+    if request.method == "POST":
+        offered = request.form.get("password") or ""
+        expected = current_app.config["PASSWORD"]
+        if hmac.compare_digest(offered.encode("utf-8"), expected.encode("utf-8")):
+            session["logged_in"] = True
+            session.permanent = True
+            nxt = request.args.get("next") or url_for("main.search")
+            if not nxt.startswith("/"):
+                nxt = url_for("main.search")
+            return redirect(nxt)
+        error = "Wrong password."
+    return render_template("login.html", error=error)
 
 
-@auth_bp.post("/login")
-def login_post():
-    return redirect("/login")
-
-
-@auth_bp.post("/logout")
-@auth_bp.get("/logout")
+@auth_bp.route("/logout", methods=["GET", "POST"])
 def logout():
     session.clear()
     return redirect(url_for("auth.login"))
