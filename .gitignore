@@ -14,4 +14,8 @@ out/
 sheets/
 debug/
 
+# Card catalog (SQLite + owned images + print-history snapshots)
+catalog.db
+catalog/
+
 .worktrees/

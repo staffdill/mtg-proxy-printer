@@ -1,7 +1,7 @@
 # Card Catalog & Reprint Queues — Design Spec
 
 **Date:** 2026-07-18
-**Status:** Approved design, ready for implementation planning
+**Status:** Implemented on `feat/card-catalog` (post-review hardening applied)
 
 ## Goal
 
@@ -97,15 +97,19 @@ row — this is how "Sol Ring, but different art each time" is represented: each
 its own catalog entry, and `add`/`search` disambiguate between them explicitly rather than
 guessing.
 
-`variant_label` defaults to the deck-of-origin (the `--out` folder's name) at import time,
-so a card only gets multiple variants when it's genuinely re-imported from a different
-deck/source — no extra typing for the common case of a card that only ever has one
-version on file. An explicit override (e.g. `"Judge Promo"`) can be supplied via the
-manifest instead, when the default deck-name label isn't descriptive enough.
+`variant_label` defaults to the deck-or-queue name used at catalog time (the `--out`
+folder's basename for `cli.py` builds, the queue name for `catalog build`). A card only
+grows extra variants when it's genuinely re-imported under a different label — no extra
+typing for the common case of a card that only ever has one version on file.
 
-`print_history` is append-only and keeps its own snapshot path so a card's full print
-history stays traceable to exactly what art was used at each point in time, independent
-of the canonical `cards.image_path` being updated later.
+**Not in this release:** an explicit per-card variant override on the separate/cli
+manifest (e.g. `"Judge Promo"`). Follow-up if deck-name defaults prove too coarse.
+
+`print_history` is append-only. On each successful print, the catalog **copies** the
+card's current owned image into `catalog/images/snapshots/` and stores that path as
+`image_snapshot_path`. Re-import may overwrite the canonical `cards.image_path` file;
+history snapshots stay independent so "what art was on the paper that day" remains
+traceable.
 
 ## Integration points
 
@@ -140,19 +144,31 @@ When a sheet clears the print gate successfully (the existing `reset_after_print
 point — no new gate logic, no new risk to the live-hardware flow), it looks up that
 sheet's rows in `sheet_contents` and, for each card:
 
-- appends a `print_history` row
+- copies the current owned image into a durable snapshot under `catalog/images/snapshots/`
+- appends a `print_history` row pointing at that snapshot
 - bumps `times_printed` / `last_printed_at` on the `cards` row
 - if `deck_or_queue` is a queue name: decrements `queue_items.quantity` by the number of
   positions consumed for that card, deleting the row at zero (this is the actual
   "consumed on print" moment)
 
+**Queue name vs folder name.** `catalog build reprints --out ./sheets-reprints` records
+`sheet_contents.deck_or_queue = 'reprints'` (the queue name), not the folder basename.
+Print runs for queue-built sheets must pass that same key:
+
+```
+python -m mtgproxy.cricut.printing --sheets ./sheets-reprints --queue reprints
+```
+
+Omit `--queue` for ordinary deck folders built by `cli.py` (where `deck_or_queue` is the
+`--out` folder name). `catalog build` prints this command after a successful build.
+
 **Fails soft, not hard.** If a sheet has no matching `sheet_contents` row (an old deck
-folder printed before this feature existed, or a hand-built sheet outside the normal
-flow), this logs a warning and continues. `printing.py` is a carefully-tuned live-hardware
-script; catalog bookkeeping must never be able to block or break an actual print run. A
-halted/unprinted sheet leaves its cards' queue rows untouched, so resuming with
-`--start-at` (as today) just picks up where it left off — no double-counting, no lost
-queue state.
+folder printed before this feature existed, a hand-built sheet, or a queue print that
+forgot `--queue`), this logs a warning and continues. Catalog open failures do the same.
+`printing.py` is a carefully-tuned live-hardware script; catalog bookkeeping must never
+be able to block or break an actual print run. A halted/unprinted sheet leaves its cards'
+queue rows untouched, so resuming with `--start-at` (as today) just picks up where it
+left off — no double-counting, no lost queue state.
 
 ### New: `catalog.py build <queue_name> --out <folder>`
 
@@ -207,6 +223,7 @@ python -m mtgproxy.catalog history "sol ring" --variant chocobo-deck
 ## Error handling & edge cases
 
 - Name matching is case-insensitive (`COLLATE NOCASE`).
+- `add --qty` must be `>= 1`; zero or negative quantities are rejected.
 - `add` refuses to guess when a name matches multiple variants and neither `--variant` nor
   `--id` is given — same discipline as the rest of this codebase (never risk queuing or
   printing the wrong card). It prints the disambiguating list instead.

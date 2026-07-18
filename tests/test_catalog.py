@@ -193,6 +193,18 @@ def test_add_to_queue_twice_accumulates_quantity(tmp_path):
     assert qty == 3
 
 
+def test_add_to_queue_rejects_non_positive_quantity(tmp_path):
+    from mtgproxy.catalog import InvalidQuantity
+
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+
+    with pytest.raises(InvalidQuantity):
+        cat.add_to_queue("reprints", qty=0, name="Sol Ring", variant_label="chocobo-deck")
+    with pytest.raises(InvalidQuantity):
+        cat.add_to_queue("reprints", qty=-3, name="Sol Ring", variant_label="chocobo-deck")
+
+
 def test_list_queue_on_an_empty_queue_returns_nothing(tmp_path):
     cat = _catalog(tmp_path)
 
@@ -344,6 +356,29 @@ def test_record_print_bumps_times_printed_and_logs_history(tmp_path):
     history = cat.history(card_id=card.id)
     assert len(history) == 1
     assert history[0]["sheet_file"] == "sheet_01.png"
+    snap = Path(history[0]["image_snapshot_path"])
+    assert snap.is_file()
+    assert snap.is_relative_to(tmp_path / "images" / "snapshots")
+    assert snap != Path(card.image_path)
+
+
+def test_record_print_snapshot_survives_reimport_of_canonical_art(tmp_path):
+    """print_history must keep the art that was actually printed even when the
+    catalog's canonical image for that card is later overwritten by re-import."""
+    cat = _catalog(tmp_path)
+    red = _card_image(tmp_path, name="Sol Ring", color="red")
+    cat.catalog_sheet([red], deck_or_queue="sheets-test", sheet_file="sheet_01.png")
+    cat.record_print("sheets-test", "sheet_01.png")
+
+    blue = _card_image(tmp_path, name="Sol Ring-new", color="blue")
+    cat.catalog_card("Sol Ring", "sheets-test", "sheets-test", blue)
+
+    card = cat.resolve(name="Sol Ring", variant_label="sheets-test")
+    history = cat.history(card_id=card.id)
+    snap = Path(history[0]["image_snapshot_path"])
+    # Canonical file is now blue; the snapshot must still be the red print.
+    assert Image.open(snap).getpixel((0, 0)) == (255, 0, 0)
+    assert Image.open(card.image_path).getpixel((0, 0)) == (0, 0, 255)
 
 
 def test_record_print_counts_the_same_card_twice_if_it_appears_twice_on_a_sheet(tmp_path):
@@ -500,6 +535,20 @@ def test_main_add_reports_ambiguous_variant(tmp_path, capsys):
 
     assert rc == 1
     assert "matches 2 variants" in capsys.readouterr().err
+
+
+def test_main_add_rejects_non_positive_qty(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+    cat.close()
+
+    rc = main(_args(
+        tmp_path, "add", "Sol Ring", "--variant", "chocobo-deck",
+        "--to", "reprints", "--qty", "0",
+    ))
+
+    assert rc == 1
+    assert "quantity" in capsys.readouterr().err.lower()
 
 
 def test_main_build_reports_sheets_and_leftover(tmp_path, capsys):

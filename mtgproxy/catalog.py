@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sqlite3
 import sys
 import time
@@ -94,6 +95,10 @@ class SheetNotCatalogued(RuntimeError):
     catalogued flow (an old deck, or a hand-built sheet)."""
 
 
+class InvalidQuantity(ValueError):
+    """Queue quantity must be a positive integer."""
+
+
 @dataclass(frozen=True)
 class CardRecord:
     id: int
@@ -142,6 +147,10 @@ class Catalog:
     def __init__(self, db_path: Path = DEFAULT_DB_PATH, images_dir: Path = DEFAULT_IMAGES_DIR):
         self.images_dir = Path(images_dir)
         self.images_dir.mkdir(parents=True, exist_ok=True)
+        # Durable print-history copies live under images_dir so one --images-dir
+        # owns both the canonical card art and every historical snapshot.
+        self.snapshots_dir = self.images_dir / "snapshots"
+        self.snapshots_dir.mkdir(parents=True, exist_ok=True)
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
@@ -170,6 +179,19 @@ class Catalog:
             (name, variant_label),
         ).fetchone()
         return row["id"]
+
+    def _snapshot_print_image(self, card_id: int, source: Path, deck_or_queue: str, sheet_file: str, index: int) -> Path:
+        """Copy the card art as it exists at print time into a durable path.
+
+        Re-import overwrites the canonical images_dir file for (name, variant);
+        print_history must not share that path or history silently changes art.
+        """
+        snap = (
+            self.snapshots_dir
+            / f"{_slug(deck_or_queue)}__{_slug(Path(sheet_file).stem)}__{index}__card{card_id}.png"
+        )
+        shutil.copy2(source, snap)
+        return snap
 
     def catalog_sheet(
         self,
@@ -242,6 +264,8 @@ class Catalog:
         variant_label: str | None = None,
         card_id: int | None = None,
     ) -> CardRecord:
+        if qty < 1:
+            raise InvalidQuantity(f"quantity must be >= 1, got {qty}")
         card = self.resolve(name=name, variant_label=variant_label, card_id=card_id)
         self.conn.execute(
             """
@@ -357,19 +381,22 @@ class Catalog:
 
         now = _now()
         counts: dict[int, int] = {}
-        for row in rows:
+        for index, row in enumerate(rows):
             card_id = row["card_id"]
             counts[card_id] = counts.get(card_id, 0) + 1
             image_path = self.conn.execute(
                 "SELECT image_path FROM cards WHERE id = ?", (card_id,)
             ).fetchone()["image_path"]
+            snap = self._snapshot_print_image(
+                card_id, Path(image_path), deck_or_queue, sheet_file, index
+            )
             self.conn.execute(
                 """
                 INSERT INTO print_history
                     (card_id, deck_or_queue, sheet_file, image_snapshot_path, printed_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (card_id, deck_or_queue, sheet_file, image_path, now),
+                (card_id, deck_or_queue, sheet_file, str(snap), now),
             )
             self.conn.execute(
                 "UPDATE cards SET times_printed = times_printed + 1, last_printed_at = ? "
@@ -446,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
                     variant_label=args.variant,
                     card_id=args.card_id,
                 )
-            except (CardNotFound, AmbiguousCard) as e:
+            except (CardNotFound, AmbiguousCard, InvalidQuantity) as e:
                 print(f"error: {e}", file=sys.stderr)
                 return 1
             print(f"added {args.qty}x {card.name} ({card.variant_label}) to {args.queue_name!r}")

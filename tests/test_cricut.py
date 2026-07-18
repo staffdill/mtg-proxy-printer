@@ -740,6 +740,32 @@ def test_main_accepts_a_queue_flag_without_erroring_on_an_empty_sheets_folder(tm
     assert "no sheets" in capsys.readouterr().err.lower()
 
 
+def test_record_print_with_folder_name_does_not_drain_a_queue_built_under_queue_name(tmp_path):
+    """Regression for the Task-8 plan bug: if printing.py passes the --sheets
+    folder basename instead of --queue, sheet_contents (keyed by queue name)
+    is missed and the queue is never drained."""
+    from mtgproxy.cricut import printing
+    from mtgproxy.catalog import Catalog
+    from PIL import Image
+
+    cat = Catalog(db_path=tmp_path / "catalog.db", images_dir=tmp_path / "images")
+    for name in [f"Card {i}" for i in range(4)]:
+        img = tmp_path / f"{name}.png"
+        Image.new("RGB", (60, 84), "red").save(img)
+        cat.catalog_card(name, "chocobo-deck", "chocobo-deck", img)
+        cat.add_to_queue("reprints", qty=1, name=name, variant_label="chocobo-deck")
+    result = cat.build_queue("reprints", tmp_path / "sheets-reprints")
+    sheet_name = result.sheets[0].name
+
+    # Wrong key (folder basename) -- what the plan originally wired.
+    printing._record_print(cat, "sheets-reprints", sheet_name)
+    assert len(cat.list_queue("reprints")) == 4
+
+    # Correct key (queue name) -- what --queue must pass.
+    printing._record_print(cat, "reprints", sheet_name)
+    assert cat.list_queue("reprints") == []
+
+
 def test_open_catalog_returns_none_and_warns_instead_of_raising(monkeypatch, capsys):
     """A broken catalog (locked db file, permission error, ...) must degrade
     to 'no history logged', never crash the print run that's about to start."""
