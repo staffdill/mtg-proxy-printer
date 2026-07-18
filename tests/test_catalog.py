@@ -405,3 +405,103 @@ def test_record_print_on_an_ordinary_deck_does_not_touch_any_queue(tmp_path):
     cat.catalog_sheet([src], deck_or_queue="sheets-chocobo", sheet_file="sheet_01.png")
 
     cat.record_print("sheets-chocobo", "sheet_01.png")  # must not raise
+
+
+# Task 5: CLI -- search, add, list, build, history
+
+from mtgproxy.catalog import main
+
+
+def _args(tmp_path, *rest):
+    return ["--db", str(tmp_path / "catalog.db"), "--images-dir", str(tmp_path / "images"), *rest]
+
+
+def test_main_search_reports_no_matches(tmp_path, capsys):
+    rc = main(_args(tmp_path, "search", "Sol Ring"))
+    assert rc == 1
+    assert "no cards match" in capsys.readouterr().out.lower()
+
+
+def test_main_search_lists_a_match(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+    cat.close()
+
+    rc = main(_args(tmp_path, "search", "sol ring"))
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Sol Ring" in out and "chocobo-deck" in out
+
+
+def test_main_add_then_list_round_trips(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+    cat.close()
+
+    rc = main(_args(
+        tmp_path, "add", "Sol Ring", "--variant", "chocobo-deck", "--to", "reprints", "--qty", "3",
+    ))
+    assert rc == 0
+
+    rc = main(_args(tmp_path, "list", "reprints"))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "3x" in out and "Sol Ring" in out
+
+
+def test_main_add_reports_ambiguous_variant(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    src = _card_image(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", src)
+    cat.catalog_card("Sol Ring", "masayoshi", "masayoshi", src)
+    cat.close()
+
+    rc = main(_args(tmp_path, "add", "Sol Ring", "--to", "reprints"))
+
+    assert rc == 1
+    assert "matches 2 variants" in capsys.readouterr().err
+
+
+def test_main_build_reports_sheets_and_leftover(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    for name in [f"Card {i}" for i in range(5)]:
+        src = _card_image(tmp_path, name=name, color="red")
+        cat.catalog_card(name, "chocobo-deck", "chocobo-deck", src)
+        cat.add_to_queue("reprints", qty=1, name=name, variant_label="chocobo-deck")
+    cat.close()
+
+    rc = main(_args(tmp_path, "build", "reprints", "--out", str(tmp_path / "out")))
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Built 1 sheet" in out
+    assert "1 card(s) left" in out
+    assert len(list((tmp_path / "out").glob("*.png"))) == 1
+
+
+def test_main_build_fails_loudly_when_an_owned_image_is_missing(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    for name in [f"Card {i}" for i in range(4)]:
+        src = _card_image(tmp_path, name=name, color="red")
+        cat.catalog_card(name, "chocobo-deck", "chocobo-deck", src)
+        cat.add_to_queue("reprints", qty=1, name=name, variant_label="chocobo-deck")
+    card = cat.resolve(name="Card 0", variant_label="chocobo-deck")
+    Path(card.image_path).unlink()  # simulate a deleted owned copy
+    cat.close()
+
+    rc = main(_args(tmp_path, "build", "reprints", "--out", str(tmp_path / "out")))
+
+    assert rc == 1
+    assert "error" in capsys.readouterr().err.lower()
+
+
+def test_main_history_reports_never_printed(tmp_path, capsys):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+    cat.close()
+
+    rc = main(_args(tmp_path, "history", "Sol Ring", "--variant", "chocobo-deck"))
+
+    assert rc == 0
+    assert "never been printed" in capsys.readouterr().out

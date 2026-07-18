@@ -15,8 +15,10 @@ be reorganized or deleted later without breaking a lookup or a reprint.
 """
 from __future__ import annotations
 
+import argparse
 import re
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -378,3 +380,119 @@ class Catalog:
                 (card_id, deck_or_queue),
             )
         self.conn.commit()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Look up, queue, and rebuild sheets for previously imported cards."
+    )
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Catalog database path.")
+    parser.add_argument(
+        "--images-dir", default=str(DEFAULT_IMAGES_DIR), help="Catalog's owned image storage."
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_search = sub.add_parser("search", help="Find a card by name.")
+    p_search.add_argument("name")
+
+    p_add = sub.add_parser("add", help="Queue a card for a build.")
+    p_add.add_argument("name", nargs="?")
+    p_add.add_argument("--variant")
+    p_add.add_argument("--id", type=int, dest="card_id")
+    p_add.add_argument("--to", required=True, dest="queue_name")
+    p_add.add_argument("--qty", type=int, default=1)
+
+    p_list = sub.add_parser("list", help="Show what's queued.")
+    p_list.add_argument("queue_name")
+
+    p_build = sub.add_parser("build", help="Tile a queue's cards into sheet_NN.png files.")
+    p_build.add_argument("queue_name")
+    p_build.add_argument("--out", required=True)
+
+    p_history = sub.add_parser("history", help="Show a card's print history.")
+    p_history.add_argument("name", nargs="?")
+    p_history.add_argument("--variant")
+    p_history.add_argument("--id", type=int, dest="card_id")
+
+    args = parser.parse_args(argv)
+    cat = Catalog(db_path=Path(args.db), images_dir=Path(args.images_dir))
+    try:
+        if args.command == "search":
+            matches = cat.search(args.name)
+            if not matches:
+                print(f"no cards match {args.name!r}")
+                return 1
+            for m in matches:
+                print(
+                    f"[{m.id}] {m.name} ({m.variant_label}) -- imported {m.first_imported_at}, "
+                    f"printed {m.times_printed}x, last {m.last_printed_at or 'never'}"
+                )
+            return 0
+
+        if args.command == "add":
+            try:
+                card = cat.add_to_queue(
+                    args.queue_name,
+                    qty=args.qty,
+                    name=args.name,
+                    variant_label=args.variant,
+                    card_id=args.card_id,
+                )
+            except (CardNotFound, AmbiguousCard) as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
+            print(f"added {args.qty}x {card.name} ({card.variant_label}) to {args.queue_name!r}")
+            return 0
+
+        if args.command == "list":
+            items = cat.list_queue(args.queue_name)
+            if not items:
+                print(f"{args.queue_name!r} is empty")
+                return 0
+            for card, qty in items:
+                print(f"  {qty}x {card.name} ({card.variant_label})")
+            return 0
+
+        if args.command == "build":
+            try:
+                result = cat.build_queue(args.queue_name, Path(args.out))
+            except OSError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
+            if not result.sheets:
+                print(
+                    f"{args.queue_name!r} has {result.leftover_cards} card(s) -- "
+                    "not enough for a full sheet yet"
+                )
+                return 0
+            print(f"Built {len(result.sheets)} sheet(s) ({result.built_cards} cards).", end=" ")
+            if result.leftover_cards:
+                print(
+                    f"{result.leftover_cards} card(s) left in {args.queue_name!r} -- "
+                    "not enough for a full sheet yet."
+                )
+            else:
+                print()
+            return 0
+
+        if args.command == "history":
+            try:
+                card = cat.resolve(name=args.name, variant_label=args.variant, card_id=args.card_id)
+            except (CardNotFound, AmbiguousCard) as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
+            rows = cat.history(card_id=card.id)
+            if not rows:
+                print(f"{card.name} ({card.variant_label}) has never been printed")
+                return 0
+            for r in rows:
+                print(f"  {r['printed_at']}  {r['deck_or_queue']}/{r['sheet_file']}")
+            return 0
+
+        return 1
+    finally:
+        cat.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
