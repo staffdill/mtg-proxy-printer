@@ -407,6 +407,45 @@ def test_record_print_on_an_ordinary_deck_does_not_touch_any_queue(tmp_path):
     cat.record_print("sheets-chocobo", "sheet_01.png")  # must not raise
 
 
+def test_a_queue_built_sheet_drains_correctly_when_printed_with_the_queue_name(tmp_path):
+    """The real seam between build_queue and record_print: printing.py must be
+    told the QUEUE name (not the --out folder name) so draining actually finds
+    the sheet_contents rows build_queue recorded under the queue name."""
+    cat = _catalog(tmp_path)
+    for name in [f"Card {i}" for i in range(4)]:
+        src = _card_image(tmp_path, name=name, color="red")
+        cat.catalog_card(name, "chocobo-deck", "chocobo-deck", src)
+        cat.add_to_queue("reprints", qty=1, name=name, variant_label="chocobo-deck")
+
+    # A deliberately different folder name than the queue name -- the exact
+    # documented workflow (catalog build reprints --out ./sheets-reprints).
+    result = cat.build_queue("reprints", tmp_path / "sheets-reprints")
+    assert len(result.sheets) == 1
+
+    # printing.py must pass the QUEUE name, not the folder's basename, for
+    # this to find the sheet_contents rows build_queue actually wrote.
+    cat.record_print("reprints", result.sheets[0].name)
+
+    assert cat.list_queue("reprints") == []
+    card = cat.resolve(name="Card 0", variant_label="chocobo-deck")
+    assert card.times_printed == 1
+
+
+def test_catalog_sheet_rebuilding_the_same_sheet_does_not_duplicate_sheet_contents(tmp_path):
+    cat = _catalog(tmp_path)
+    a = _card_image(tmp_path, name="Sol Ring", color="red")
+    b = _card_image(tmp_path, name="Lightning Bolt", color="blue")
+
+    cat.catalog_sheet([a, b], deck_or_queue="sheets-test", sheet_file="sheet_01.png")
+    cat.catalog_sheet([a, b], deck_or_queue="sheets-test", sheet_file="sheet_01.png")  # rebuild
+
+    rows = cat.conn.execute(
+        "SELECT COUNT(*) AS n FROM sheet_contents WHERE deck_or_queue = 'sheets-test' "
+        "AND sheet_file = 'sheet_01.png'"
+    ).fetchone()
+    assert rows["n"] == 2  # one row per position (2 cards), not 4 from two inserts
+
+
 # Task 5: CLI -- search, add, list, build, history
 
 from mtgproxy.catalog import main

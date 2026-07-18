@@ -711,6 +711,35 @@ def test_record_print_logs_history_for_a_catalogued_sheet(tmp_path):
     assert card.times_printed == 1
 
 
+def test_main_accepts_a_queue_flag_without_erroring_on_an_empty_sheets_folder(tmp_path, capsys):
+    """main()'s per-sheet loop (where `deck_or_queue = args.queue if args.queue
+    else folder.name` actually runs) drives live Design Space through pyautogui
+    and cannot be exercised here, same as every other main()-level behavior in
+    this file -- there is no test anywhere that calls printing.main() through a
+    real print. What CAN be checked without hardware is that --queue is a
+    recognized argument (argparse would raise SystemExit on an unknown flag
+    before main() ever reaches the sheets folder), verified here via the
+    "no sheets" early-return path, which requires no screen access at all.
+
+    The value-selection logic itself is a one-line ternary
+    (`args.queue if args.queue else folder.name`); the behavior it feeds --
+    draining a queue-built sheet under the queue's name instead of the
+    --sheets folder's name -- is covered directly against the real
+    Catalog.record_print in
+    test_a_queue_built_sheet_drains_correctly_when_printed_with_the_queue_name
+    in tests/test_catalog.py.
+    """
+    from mtgproxy.cricut import printing
+
+    empty = tmp_path / "sheets"
+    empty.mkdir()
+
+    rc = printing.main(["--sheets", str(empty), "--queue", "reprints"])
+
+    assert rc == 1
+    assert "no sheets" in capsys.readouterr().err.lower()
+
+
 def test_open_catalog_returns_none_and_warns_instead_of_raising(monkeypatch, capsys):
     """A broken catalog (locked db file, permission error, ...) must degrade
     to 'no history logged', never crash the print run that's about to start."""

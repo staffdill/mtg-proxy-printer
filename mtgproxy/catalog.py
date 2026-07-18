@@ -179,6 +179,10 @@ class Catalog:
         variant_label: str | None = None,
     ) -> None:
         label = variant_label or deck_or_queue
+        self.conn.execute(
+            "DELETE FROM sheet_contents WHERE deck_or_queue = ? AND sheet_file = ?",
+            (deck_or_queue, sheet_file),
+        )
         for position, path in enumerate(card_paths):
             name = _card_name_from_path(Path(path))
             card_id = self.catalog_card(name, label, deck_or_queue, Path(path))
@@ -318,6 +322,10 @@ class Catalog:
 
         for sheet_path, start in zip(written, range(0, len(to_build), n)):
             chunk = to_build[start : start + n]
+            self.conn.execute(
+                "DELETE FROM sheet_contents WHERE deck_or_queue = ? AND sheet_file = ?",
+                (queue_name, sheet_path.name),
+            )
             for position, (card_id, _) in enumerate(chunk):
                 self.conn.execute(
                     "INSERT INTO sheet_contents (deck_or_queue, sheet_file, position, card_id) "
@@ -473,6 +481,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 print()
+            print(
+                f"Print with: python -m mtgproxy.cricut.printing --sheets {args.out} "
+                f"--queue {args.queue_name}"
+            )
             return 0
 
         if args.command == "history":

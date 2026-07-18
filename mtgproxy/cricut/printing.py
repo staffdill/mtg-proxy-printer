@@ -587,6 +587,13 @@ def main(argv: list[str] | None = None) -> int:
              "unattended — make sure the tray holds enough matte stock for every sheet.",
     )
     parser.add_argument(
+        "--queue",
+        default=None,
+        help="If these sheets were built from a catalog queue (mtgproxy.catalog build), "
+        "name the queue here so print history/draining key against the queue name "
+        "instead of the --sheets folder name. Omit for an ordinary deck folder.",
+    )
+    parser.add_argument(
         "--catalog-db", default=str(DEFAULT_DB_PATH), help="Card catalog database path."
     )
     parser.add_argument(
@@ -672,8 +679,9 @@ def main(argv: list[str] | None = None) -> int:
     for i, sheet in enumerate(todo, start=1):
         try:
             print_sheet(screen, sheet, everything, i, len(todo), auto_print=args.auto_print)
+            deck_or_queue = args.queue if args.queue else folder.name
             if cat is not None:
-                _record_print(cat, folder.name, sheet.name)
+                _record_print(cat, deck_or_queue, sheet.name)
         except (TemplateNotFound, WrongSheet, native.DialogNotFound,
                 native.DesignSpaceNotFocused, RuntimeError) as e:
             n = int(sheet.stem.split("_")[1])
