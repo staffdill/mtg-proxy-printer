@@ -152,6 +152,23 @@ def test_resolve_raises_card_not_found_for_an_unknown_name(tmp_path):
         cat.resolve(name="Nonexistent Card")
 
 
+def test_resolve_by_card_id_returns_the_correct_card(tmp_path):
+    cat = _catalog(tmp_path)
+    card_id = cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+
+    found = cat.resolve(card_id=card_id)
+
+    assert found.id == card_id
+    assert found.name == "Sol Ring"
+
+
+def test_resolve_raises_card_not_found_for_an_unknown_card_id(tmp_path):
+    cat = _catalog(tmp_path)
+
+    with pytest.raises(CardNotFound):
+        cat.resolve(card_id=999999)
+
+
 def test_add_to_queue_then_list_queue_round_trips(tmp_path):
     cat = _catalog(tmp_path)
     cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
