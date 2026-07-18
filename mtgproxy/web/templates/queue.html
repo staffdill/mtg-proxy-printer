@@ -11,4 +11,21 @@
   {% endfor %}
   </ul>
 {% endif %}
+<form method="post" action="{{ url_for('main.build_queue', queue_name=queue_name) }}">
+  <button type="submit">Build full sheets</button>
+</form>
+{% if build_result %}
+  <div class="build-result">
+    {% if build_result.sheets %}
+      <p>Built {{ build_result.sheets|length }} sheet(s) ({{ build_result.built_cards }} cards).</p>
+      {% if build_result.leftover_cards %}
+        <p>{{ build_result.leftover_cards }} card(s) left in '{{ queue_name }}' — not enough for a full sheet yet.</p>
+      {% endif %}
+      <p class="muted">Print command (copy):</p>
+      <pre>{{ print_cmd }}</pre>
+    {% else %}
+      <p>'{{ queue_name }}' has {{ build_result.leftover_cards }} card(s) — not enough for a full sheet yet.</p>
+    {% endif %}
+  </div>
+{% endif %}
 {% endblock %}

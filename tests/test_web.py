@@ -162,3 +162,20 @@ def test_add_rejects_qty_zero(tmp_path):
     _login(client)
     client.post("/queue/add", data={"card_id": cid, "qty": 0, "queue_name": "reprints"})
     assert app.extensions["catalog"].list_queue("reprints") == []
+
+
+def test_build_queue_writes_sheet(tmp_path):
+    app, client = _client(tmp_path)
+    cat = app.extensions["catalog"]
+    for i in range(4):
+        name = f"Card {i}"
+        src = _card_png(tmp_path / f"{name}.png")
+        cat.catalog_card(name, "v", "v", src)
+        cat.add_to_queue("reprints", qty=1, name=name, variant_label="v")
+    _login(client)
+    resp = client.post("/queues/reprints/build", follow_redirects=True)
+    assert resp.status_code == 200
+    assert b"Built" in resp.data or b"sheet" in resp.data.lower()
+    out = Path(app.config["SHEETS_ROOT"]) / "sheets-reprints"
+    assert any(out.glob("sheet*.png"))
+    assert b"--queue reprints" in resp.data

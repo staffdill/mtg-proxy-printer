@@ -73,7 +73,35 @@ def add_to_queue():
 @login_required
 def queue(queue_name: str):
     items = _catalog().list_queue(queue_name)
-    return render_template("queue.html", queue_name=queue_name, items=items, build_result=None)
+    return render_template(
+        "queue.html",
+        queue_name=queue_name,
+        items=items,
+        build_result=None,
+        print_cmd=None,
+    )
+
+
+@bp.post("/queues/<queue_name>/build")
+@login_required
+def build_queue(queue_name: str):
+    out_dir = Path(current_app.config["SHEETS_ROOT"]) / f"sheets-{queue_name}"
+    try:
+        result = _catalog().build_queue(queue_name, out_dir)
+    except OSError as e:
+        flash(f"Build failed: {e}")
+        return redirect(url_for("main.queue", queue_name=queue_name))
+    items = _catalog().list_queue(queue_name)
+    print_cmd = (
+        f"python -m mtgproxy.cricut.printing --sheets {out_dir} --queue {queue_name}"
+    )
+    return render_template(
+        "queue.html",
+        queue_name=queue_name,
+        items=items,
+        build_result=result,
+        print_cmd=print_cmd,
+    )
 
 
 @bp.get("/cards/<int:card_id>/history")
