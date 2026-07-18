@@ -215,11 +215,21 @@ class Catalog:
             )
         self.conn.commit()
 
-    def search(self, name: str) -> list[CardRecord]:
-        rows = self.conn.execute(
-            "SELECT * FROM cards WHERE name = ? ORDER BY variant_label",
-            (name,),
-        ).fetchall()
+    def search(self, name: str, *, partial: bool = False) -> list[CardRecord]:
+        needle = (name or "").strip()
+        if not needle:
+            return []
+        if partial:
+            rows = self.conn.execute(
+                "SELECT * FROM cards WHERE name LIKE '%' || ? || '%' "
+                "ESCAPE '\\' ORDER BY name, variant_label",
+                (needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"),),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM cards WHERE name = ? ORDER BY variant_label",
+                (needle,),
+            ).fetchall()
         return [_row_to_record(r) for r in rows]
 
     def resolve(

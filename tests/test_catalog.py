@@ -593,3 +593,39 @@ def test_main_history_reports_never_printed(tmp_path, capsys):
 
     assert rc == 0
     assert "never been printed" in capsys.readouterr().out
+
+
+def test_search_partial_matches_substring(tmp_path):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+    cat.catalog_card("Lightning Bolt", "chocobo-deck", "chocobo-deck", _card_image(tmp_path, name="Bolt"))
+
+    matches = cat.search("ring", partial=True)
+
+    assert len(matches) == 1
+    assert matches[0].name == "Sol Ring"
+
+
+def test_search_partial_is_case_insensitive(tmp_path):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+
+    matches = cat.search("SOL", partial=True)
+
+    assert len(matches) == 1
+
+
+def test_search_exact_still_requires_full_name(tmp_path):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+
+    assert cat.search("ring", partial=False) == []
+    assert len(cat.search("Sol Ring", partial=False)) == 1
+
+
+def test_search_partial_empty_query_returns_nothing(tmp_path):
+    cat = _catalog(tmp_path)
+    cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
+
+    assert cat.search("", partial=True) == []
+    assert cat.search("   ", partial=True) == []
