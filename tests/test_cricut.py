@@ -711,23 +711,20 @@ def test_record_print_logs_history_for_a_catalogued_sheet(tmp_path):
     assert card.times_printed == 1
 
 
-def test_record_print_is_never_called_when_the_catalog_itself_is_unusable(tmp_path, monkeypatch):
-    """A broken catalog (e.g. Catalog() raising) must degrade to 'no history
-    logged', never crash or block the print loop that follows it."""
+def test_open_catalog_returns_none_and_warns_instead_of_raising(monkeypatch, capsys):
+    """A broken catalog (locked db file, permission error, ...) must degrade
+    to 'no history logged', never crash the print run that's about to start."""
     from mtgproxy.cricut import printing
-    from mtgproxy import catalog as catalog_module
 
     def _boom(*args, **kwargs):
         raise RuntimeError("simulated: db file locked")
 
-    monkeypatch.setattr(catalog_module, "Catalog", _boom)
+    # printing.py does `from mtgproxy.catalog import Catalog`, so the name it
+    # calls is bound in printing's own namespace -- patch it there, not on
+    # mtgproxy.catalog, or this test would pass while calling the real Catalog.
+    monkeypatch.setattr(printing, "Catalog", _boom)
 
-    # main()'s Catalog construction must be wrapped -- this just proves the
-    # wrapping pattern doesn't propagate. We can't easily drive the whole
-    # live-hardware main() here, so this test targets the exact pattern:
-    cat = None
-    try:
-        cat = catalog_module.Catalog(db_path=tmp_path / "catalog.db", images_dir=tmp_path / "images")
-    except Exception:
-        cat = None
+    cat = printing._open_catalog(Path("unused.db"), Path("unused-images"))
+
     assert cat is None
+    assert "catalog" in capsys.readouterr().out.lower()

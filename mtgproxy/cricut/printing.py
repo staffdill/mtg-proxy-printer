@@ -515,6 +515,29 @@ def _record_print(cat: Catalog, deck_or_queue: str, sheet_file: str) -> None:
         print(f"      catalog: unexpected error recording print history: {e}")
 
 
+def _open_catalog(db_path: Path, images_dir: Path) -> Catalog | None:
+    """Open the catalog, or None if it can't be opened right now.
+
+    A locked db file, a permission error, or any other catalog problem must
+    never stop a live print run -- it degrades to "no print history logged."
+    """
+    try:
+        return Catalog(db_path=db_path, images_dir=images_dir)
+    except Exception as e:
+        print(f"      catalog: could not open catalog ({e}) -- print history will not be recorded")
+        return None
+
+
+def _close_catalog(cat: Catalog | None) -> None:
+    """Close the catalog, if one is open. Never lets a close failure escape."""
+    if cat is None:
+        return
+    try:
+        cat.close()
+    except Exception:
+        pass
+
+
 def build_project(screen: Screen, sheets: list[Path], everything: list[Path]) -> None:
     """Place every sheet onto ONE canvas, each sized to 5.276in, and stop.
 
@@ -644,13 +667,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: could not get to an empty canvas: {e}", file=sys.stderr)
         return 1
 
-    cat = None
-    try:
-        cat = Catalog(db_path=Path(args.catalog_db), images_dir=Path(args.catalog_images_dir))
-    except Exception as e:
-        # A broken catalog (locked db file, permission error, ...) must never stop a
-        # live print run -- it degrades to "no print history logged", nothing more.
-        print(f"      catalog: could not open catalog ({e}) -- print history will not be recorded")
+    cat = _open_catalog(Path(args.catalog_db), Path(args.catalog_images_dir))
 
     for i, sheet in enumerate(todo, start=1):
         try:
@@ -675,12 +692,10 @@ def main(argv: list[str] | None = None) -> int:
                     f"Halted. Nothing was printed. Resume with --start-at {n}",
                     file=sys.stderr,
                 )
-            if cat is not None:
-                cat.close()
+            _close_catalog(cat)
             return 1
 
-    if cat is not None:
-        cat.close()
+    _close_catalog(cat)
     print(f"\nDone — {len(todo)} sheet(s).")
     return 0
 
