@@ -13,3 +13,5 @@ venv/
 out/
 sheets/
 debug/
+
+.worktrees/
