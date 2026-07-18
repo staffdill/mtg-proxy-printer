@@ -85,3 +85,33 @@ def test_logout_clears_session(tmp_path):
     resp = client.get("/")
     assert resp.status_code == 302
     assert "/login" in resp.headers["Location"]
+
+
+def _login(client, password="secret"):
+    return client.post("/login", data={"password": password})
+
+
+def _seed_card(tmp_path, app, name="Sol Ring", variant="chocobo-deck"):
+    from mtgproxy.catalog import Catalog
+    cat = app.extensions["catalog"]
+    src = _card_png(tmp_path / f"{name}.png")
+    return cat.catalog_card(name, variant, variant, src)
+
+
+def test_search_partial_shows_card_name(tmp_path):
+    app, client = _client(tmp_path)
+    _seed_card(tmp_path, app)
+    _login(client)
+    resp = client.get("/search?q=ring")
+    assert resp.status_code == 200
+    assert b"Sol Ring" in resp.data
+    assert b"chocobo-deck" in resp.data
+
+
+def test_search_empty_query_does_not_dump_catalog(tmp_path):
+    app, client = _client(tmp_path)
+    _seed_card(tmp_path, app)
+    _login(client)
+    resp = client.get("/search?q=")
+    assert resp.status_code == 200
+    assert b"Sol Ring" not in resp.data

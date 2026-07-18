@@ -1,0 +1,25 @@
+{% if results is none %}
+  <p class="muted">Type part of a card name to search the catalog.</p>
+{% elif not results %}
+  <p class="muted">No cards match “{{ q }}”.</p>
+{% else %}
+  <ul class="card-list">
+  {% for c in results %}
+    <li class="card-row">
+      <img class="thumb" src="{{ url_for('main.card_image', card_id=c.id) }}" alt="" width="90" height="126" loading="lazy">
+      <div class="card-meta">
+        <strong>{{ c.name }}</strong>
+        <span class="muted">{{ c.variant_label }}</span>
+        <span class="muted">printed {{ c.times_printed }}× · last {{ c.last_printed_at or 'never' }}</span>
+        <a href="{{ url_for('main.history', card_id=c.id) }}">History</a>
+      </div>
+      <form class="add-form" method="post" action="{{ url_for('main.add_to_queue') }}">
+        <input type="hidden" name="card_id" value="{{ c.id }}">
+        <label>Qty <input type="number" name="qty" value="1" min="1" style="width:4rem"></label>
+        <label>Queue <input type="text" name="queue_name" value="reprints" size="10"></label>
+        <button type="submit">Add</button>
+      </form>
+    </li>
+  {% endfor %}
+  </ul>
+{% endif %}
