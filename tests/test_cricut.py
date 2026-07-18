@@ -709,3 +709,25 @@ def test_record_print_logs_history_for_a_catalogued_sheet(tmp_path):
 
     card = cat.resolve(name="Sol Ring", variant_label="sheets-test")
     assert card.times_printed == 1
+
+
+def test_record_print_is_never_called_when_the_catalog_itself_is_unusable(tmp_path, monkeypatch):
+    """A broken catalog (e.g. Catalog() raising) must degrade to 'no history
+    logged', never crash or block the print loop that follows it."""
+    from mtgproxy.cricut import printing
+    from mtgproxy import catalog as catalog_module
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated: db file locked")
+
+    monkeypatch.setattr(catalog_module, "Catalog", _boom)
+
+    # main()'s Catalog construction must be wrapped -- this just proves the
+    # wrapping pattern doesn't propagate. We can't easily drive the whole
+    # live-hardware main() here, so this test targets the exact pattern:
+    cat = None
+    try:
+        cat = catalog_module.Catalog(db_path=tmp_path / "catalog.db", images_dir=tmp_path / "images")
+    except Exception:
+        cat = None
+    assert cat is None

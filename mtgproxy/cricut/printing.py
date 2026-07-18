@@ -644,11 +644,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: could not get to an empty canvas: {e}", file=sys.stderr)
         return 1
 
-    cat = Catalog(db_path=Path(args.catalog_db), images_dir=Path(args.catalog_images_dir))
+    cat = None
+    try:
+        cat = Catalog(db_path=Path(args.catalog_db), images_dir=Path(args.catalog_images_dir))
+    except Exception as e:
+        # A broken catalog (locked db file, permission error, ...) must never stop a
+        # live print run -- it degrades to "no print history logged", nothing more.
+        print(f"      catalog: could not open catalog ({e}) -- print history will not be recorded")
+
     for i, sheet in enumerate(todo, start=1):
         try:
             print_sheet(screen, sheet, everything, i, len(todo), auto_print=args.auto_print)
-            _record_print(cat, folder.name, sheet.name)
+            if cat is not None:
+                _record_print(cat, folder.name, sheet.name)
         except (TemplateNotFound, WrongSheet, native.DialogNotFound,
                 native.DesignSpaceNotFocused, RuntimeError) as e:
             n = int(sheet.stem.split("_")[1])
@@ -667,8 +675,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"Halted. Nothing was printed. Resume with --start-at {n}",
                     file=sys.stderr,
                 )
+            if cat is not None:
+                cat.close()
             return 1
 
+    if cat is not None:
+        cat.close()
     print(f"\nDone — {len(todo)} sheet(s).")
     return 0
 
