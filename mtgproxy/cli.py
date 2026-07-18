@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from mtgproxy.batch import build_sheets, save_sheets
+from mtgproxy.catalog import DEFAULT_DB_PATH, DEFAULT_IMAGES_DIR, Catalog
 from mtgproxy.geometry import (
     MM_PER_INCH,
     GeometryConfig,
@@ -34,6 +35,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Output transparent sheets with rounded cards so Design Space "
         "auto-creates the cut lines (no manual cut template needed).",
     )
+    parser.add_argument(
+        "--catalog-db", default=str(DEFAULT_DB_PATH), help="Card catalog database path."
+    )
+    parser.add_argument(
+        "--catalog-images-dir",
+        default=str(DEFAULT_IMAGES_DIR),
+        help="Card catalog's owned image storage.",
+    )
     args = parser.parse_args(argv)
 
     input_dir = Path(args.input)
@@ -53,6 +62,16 @@ def main(argv: list[str] | None = None) -> int:
     crop = not args.full_sheet
     sheets = build_sheets(card_paths, cfg, crop=crop, sticker=args.sticker)
     written = save_sheets(sheets, Path(args.out), dpi=cfg.dpi)
+
+    cat = Catalog(db_path=Path(args.catalog_db), images_dir=Path(args.catalog_images_dir))
+    try:
+        deck_name = Path(args.out).name
+        n = cfg.cards_per_sheet
+        for sheet_path, start in zip(written, range(0, len(card_paths), n)):
+            chunk = card_paths[start : start + n]
+            cat.catalog_sheet(chunk, deck_or_queue=deck_name, sheet_file=sheet_path.name)
+    finally:
+        cat.close()
 
     print(f"Wrote {len(written)} sheet(s) from {len(card_paths)} card(s) to {args.out}")
     if args.sticker:
