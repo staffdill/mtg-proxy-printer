@@ -21,6 +21,18 @@ Sleeving each proxy with a real card behind it already gives the gloss and the r
 - **No cut template is needed.** The sheets are transparent PNGs and Design Space
   generates the cut lines from the transparency itself.
 
+## Catalog web UI (LAN)
+
+Thin browser UI over the catalog (search, queue, build, history). Does **not** drive Design Space.
+
+```bat
+set MTGPROXY_WEB_PASSWORD=your-shared-password
+set MTGPROXY_WEB_SECRET=long-random-string
+python -m mtgproxy.web --host 0.0.0.0 --port 8765
+```
+
+Open `http://<this-pc-lan-ip>:8765/` on your phone or another PC. Trusted home LAN only — not the public internet. Do not run CLI catalog writes and the web UI against the same DB at the same time if you can avoid it.
+
 ## One-time printer setup (do this once, not per deck)
 
 Set these in the printer's **Printing Preferences** — the persistent one, reached from

@@ -199,3 +199,12 @@ def test_history_unknown_card_404(tmp_path):
     _, client = _client(tmp_path)
     _login(client)
     assert client.get("/cards/99999/history").status_code == 404
+
+
+def test_main_refuses_missing_password(monkeypatch, capsys):
+    from mtgproxy.web.__main__ import main
+
+    monkeypatch.delenv("MTGPROXY_WEB_PASSWORD", raising=False)
+    rc = main(["--db", "x.db"])  # no password
+    assert rc == 2
+    assert "password" in capsys.readouterr().err.lower()
