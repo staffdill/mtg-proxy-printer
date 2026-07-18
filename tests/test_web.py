@@ -93,6 +93,32 @@ def test_logout_clears_session(tmp_path):
     assert "/login" in resp.headers["Location"]
 
 
+def test_login_rejects_protocol_relative_next(tmp_path):
+    """Open-redirect: ?next=//evil.example must land on local search."""
+    _, client = _client(tmp_path, password="correct")
+    resp = client.post(
+        "/login?next=//evil.example",
+        data={"password": "correct"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    loc = resp.headers["Location"]
+    # Path stays local — no host, no protocol-relative
+    assert loc.startswith("/")
+    assert not loc.startswith("//")
+    assert "evil" not in loc
+
+
+def test_login_required_post_omits_next(tmp_path):
+    """POST to a protected route when logged out should not set next=POST path."""
+    _, client = _client(tmp_path)
+    resp = client.post("/queue/add", data={"card_id": 1, "qty": 1})
+    assert resp.status_code == 302
+    loc = resp.headers["Location"]
+    assert "/login" in loc
+    assert "next=" not in loc
+
+
 def _login(client, password="secret"):
     return client.post("/login", data={"password": password})
 
@@ -187,6 +213,16 @@ def test_build_queue_writes_sheet(tmp_path):
     assert b"--queue reprints" in resp.data
 
 
+def test_build_queue_rejects_unsafe_queue_name(tmp_path):
+    app, client = _client(tmp_path)
+    _login(client)
+    # ".." substring is rejected before any write under SHEETS_ROOT
+    resp = client.post("/queues/foo..bar/build", follow_redirects=False)
+    assert resp.status_code == 302
+    sheets = Path(app.config["SHEETS_ROOT"])
+    assert not any(sheets.rglob("*")) or not (sheets / "sheets-foo..bar").exists()
+
+
 def test_history_lists_print(tmp_path):
     app, client = _client(tmp_path)
     cat = app.extensions["catalog"]
@@ -199,6 +235,8 @@ def test_history_lists_print(tmp_path):
     assert resp.status_code == 200
     assert b"sheet_01.png" in resp.data
     assert b"sheets-test" in resp.data
+    # Snapshot thumb should reference the snapshot_image route when file exists
+    assert b"/images/snapshots/" in resp.data
 
 
 def test_history_unknown_card_404(tmp_path):

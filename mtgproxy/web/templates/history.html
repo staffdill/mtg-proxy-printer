@@ -9,6 +9,9 @@
   <ul class="history">
   {% for e in entries %}
     <li>
+      {% if e.snap_ok and e.rel %}
+      <img src="{{ url_for('main.snapshot_image', rel=e.rel) }}" alt="" class="thumb" width="48" height="68">
+      {% endif %}
       <time>{{ e.row['printed_at'] }}</time>
       {{ e.row['deck_or_queue'] }} / {{ e.row['sheet_file'] }}
     </li>

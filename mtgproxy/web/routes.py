@@ -82,10 +82,26 @@ def queue(queue_name: str):
     )
 
 
+def _queue_name_safe(queue_name: str) -> bool:
+    name = (queue_name or "").strip()
+    if not name:
+        return False
+    if ".." in name or "/" in name or "\\" in name:
+        return False
+    return True
+
+
 @bp.post("/queues/<queue_name>/build")
 @login_required
 def build_queue(queue_name: str):
-    out_dir = Path(current_app.config["SHEETS_ROOT"]) / f"sheets-{queue_name}"
+    if not _queue_name_safe(queue_name):
+        flash("Invalid queue name.")
+        return redirect(url_for("main.search"))
+    sheets_root = Path(current_app.config["SHEETS_ROOT"])
+    out_dir = (sheets_root / f"sheets-{queue_name}").resolve()
+    if not _is_under(out_dir, sheets_root):
+        flash("Invalid queue name.")
+        return redirect(url_for("main.search"))
     try:
         result = _catalog().build_queue(queue_name, out_dir)
     except OSError as e:
@@ -112,10 +128,18 @@ def history(card_id: int):
     except CardNotFound:
         abort(404)
     rows = _catalog().history(card_id=card_id)
+    snap_root = Path(current_app.config["IMAGES_DIR"]) / "snapshots"
     enriched = []
     for r in rows:
         snap = Path(r["image_snapshot_path"])
-        enriched.append({"row": r, "snap_ok": snap.is_file()})
+        snap_ok = snap.is_file()
+        rel = None
+        if snap_ok:
+            try:
+                rel = snap.resolve().relative_to(snap_root.resolve()).as_posix()
+            except ValueError:
+                snap_ok = False
+        enriched.append({"row": r, "snap_ok": snap_ok, "rel": rel})
     return render_template("history.html", card=card, entries=enriched)
 
 
