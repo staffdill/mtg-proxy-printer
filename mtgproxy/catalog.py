@@ -176,3 +176,90 @@ class Catalog:
                 (deck_or_queue, sheet_file, position, card_id),
             )
         self.conn.commit()
+
+    def search(self, name: str) -> list[CardRecord]:
+        rows = self.conn.execute(
+            "SELECT * FROM cards WHERE name = ? ORDER BY variant_label",
+            (name,),
+        ).fetchall()
+        return [_row_to_record(r) for r in rows]
+
+    def resolve(
+        self,
+        name: str | None = None,
+        variant_label: str | None = None,
+        card_id: int | None = None,
+    ) -> CardRecord:
+        if card_id is not None:
+            row = self.conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
+            if row is None:
+                raise CardNotFound(f"no card with id {card_id}")
+            return _row_to_record(row)
+
+        if name is None:
+            raise CardNotFound("must give a name or --id")
+
+        if variant_label is not None:
+            row = self.conn.execute(
+                "SELECT * FROM cards WHERE name = ? AND variant_label = ?",
+                (name, variant_label),
+            ).fetchone()
+            if row is None:
+                raise CardNotFound(f"no card named {name!r} with variant {variant_label!r}")
+            return _row_to_record(row)
+
+        matches = self.search(name)
+        if not matches:
+            raise CardNotFound(f"no card named {name!r}")
+        if len(matches) > 1:
+            listing = ", ".join(f"{m.variant_label!r} (id={m.id})" for m in matches)
+            raise AmbiguousCard(
+                f"{name!r} matches {len(matches)} variants: {listing} -- pass --variant or --id"
+            )
+        return matches[0]
+
+    def add_to_queue(
+        self,
+        queue_name: str,
+        qty: int = 1,
+        name: str | None = None,
+        variant_label: str | None = None,
+        card_id: int | None = None,
+    ) -> CardRecord:
+        card = self.resolve(name=name, variant_label=variant_label, card_id=card_id)
+        self.conn.execute(
+            """
+            INSERT INTO queue_items (card_id, queue_name, quantity, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(card_id, queue_name) DO UPDATE SET
+                quantity = quantity + excluded.quantity
+            """,
+            (card.id, queue_name, qty, _now()),
+        )
+        self.conn.commit()
+        return card
+
+    def list_queue(self, queue_name: str) -> list[tuple[CardRecord, int]]:
+        rows = self.conn.execute(
+            """
+            SELECT cards.*, queue_items.quantity AS qty
+            FROM queue_items
+            JOIN cards ON cards.id = queue_items.card_id
+            WHERE queue_items.queue_name = ?
+            ORDER BY queue_items.added_at
+            """,
+            (queue_name,),
+        ).fetchall()
+        return [(_row_to_record(r), r["qty"]) for r in rows]
+
+    def history(
+        self,
+        name: str | None = None,
+        variant_label: str | None = None,
+        card_id: int | None = None,
+    ) -> list[sqlite3.Row]:
+        card = self.resolve(name=name, variant_label=variant_label, card_id=card_id)
+        return self.conn.execute(
+            "SELECT * FROM print_history WHERE card_id = ? ORDER BY printed_at",
+            (card.id,),
+        ).fetchall()
