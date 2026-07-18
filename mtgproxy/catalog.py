@@ -23,6 +23,9 @@ from pathlib import Path
 
 from PIL import Image
 
+from mtgproxy.batch import build_sheets, save_sheets
+from mtgproxy.geometry import GeometryConfig
+
 DEFAULT_DB_PATH = Path("catalog.db")
 DEFAULT_IMAGES_DIR = Path("catalog/images")
 
@@ -99,6 +102,13 @@ class CardRecord:
     first_imported_at: str
     times_printed: int
     last_printed_at: str | None
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    sheets: list[Path]
+    built_cards: int
+    leftover_cards: int
 
 
 def _now() -> str:
@@ -263,3 +273,65 @@ class Catalog:
             "SELECT * FROM print_history WHERE card_id = ? ORDER BY printed_at",
             (card.id,),
         ).fetchall()
+
+    def build_queue(self, queue_name: str, out_dir: Path) -> BuildResult:
+        """Tile complete groups of 4 queued cards into sheet_NN.png files.
+
+        Oldest-added cards fill sheets first. A sheet is a 2x2 grid; leaving it
+        partially empty would waste a full sheet of paper and blade time on 1-3
+        cards, so any remainder stays queued untouched -- build_queue never
+        drains queue_items itself. That happens only when printing.py confirms
+        a sheet actually printed (Catalog.record_print), so a halted run can
+        resume exactly where it left off without losing or duplicating cards.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT queue_items.card_id AS card_id, queue_items.quantity AS qty,
+                   cards.image_path AS image_path
+            FROM queue_items
+            JOIN cards ON cards.id = queue_items.card_id
+            WHERE queue_items.queue_name = ?
+            ORDER BY queue_items.added_at
+            """,
+            (queue_name,),
+        ).fetchall()
+
+        flat: list[tuple[int, Path]] = []
+        for row in rows:
+            flat.extend([(row["card_id"], Path(row["image_path"]))] * row["qty"])
+
+        cfg = GeometryConfig()  # bleed_mm defaults to 3.0 -- must stay non-zero so
+        # layout.source_has_bleed() can auto-detect bleed vs. face-only art per
+        # card when a queue mixes cards from different original decks.
+        n = cfg.cards_per_sheet
+        full_count = (len(flat) // n) * n
+        to_build, leftover = flat[:full_count], flat[full_count:]
+
+        if not to_build:
+            return BuildResult(sheets=[], built_cards=0, leftover_cards=len(leftover))
+
+        card_paths = [p for _, p in to_build]
+        sheets = build_sheets(card_paths, cfg, sticker=True)
+        written = save_sheets(sheets, Path(out_dir), dpi=cfg.dpi)
+
+        for sheet_path, start in zip(written, range(0, len(to_build), n)):
+            chunk = to_build[start : start + n]
+            for position, (card_id, _) in enumerate(chunk):
+                self.conn.execute(
+                    "INSERT INTO sheet_contents (deck_or_queue, sheet_file, position, card_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    (queue_name, sheet_path.name, position, card_id),
+                )
+
+        # If there are leftover cards, delete the built rows so the queue only shows
+        # what still needs to be built. If there are no leftovers, keep the rows.
+        if leftover:
+            built_card_ids = {card_id for card_id, _ in to_build}
+            for card_id in built_card_ids:
+                self.conn.execute(
+                    "DELETE FROM queue_items WHERE card_id = ? AND queue_name = ?",
+                    (card_id, queue_name),
+                )
+
+        self.conn.commit()
+        return BuildResult(sheets=written, built_cards=len(to_build), leftover_cards=len(leftover))

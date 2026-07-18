@@ -204,3 +204,83 @@ def test_history_is_empty_for_a_never_printed_card(tmp_path):
     cat.catalog_card("Sol Ring", "chocobo-deck", "chocobo-deck", _card_image(tmp_path))
 
     assert cat.history(name="Sol Ring", variant_label="chocobo-deck") == []
+
+
+# Task 3: build_queue -- FIFO flattening, skip sub-4 sheets
+
+
+def _seed_queue(cat, tmp_path, names, qty=1, queue_name="reprints"):
+    for name in names:
+        src = _card_image(tmp_path, name=name, color="red")
+        cat.catalog_card(name, "chocobo-deck", "chocobo-deck", src)
+        cat.add_to_queue(queue_name, qty=qty, name=name, variant_label="chocobo-deck")
+
+
+def test_build_queue_with_fewer_than_4_cards_builds_nothing(tmp_path):
+    cat = _catalog(tmp_path)
+    _seed_queue(cat, tmp_path, ["Sol Ring", "Lightning Bolt"])
+
+    result = cat.build_queue("reprints", tmp_path / "out")
+
+    assert result.sheets == []
+    assert result.built_cards == 0
+    assert result.leftover_cards == 2
+
+
+def test_build_queue_builds_full_groups_of_4_and_leaves_the_remainder(tmp_path):
+    cat = _catalog(tmp_path)
+    _seed_queue(cat, tmp_path, [f"Card {i}" for i in range(5)])  # 5 cards -> 1 sheet + 1 left
+
+    result = cat.build_queue("reprints", tmp_path / "out")
+
+    assert len(result.sheets) == 1
+    assert result.built_cards == 4
+    assert result.leftover_cards == 1
+    assert all(p.is_file() for p in result.sheets)
+
+
+def test_build_queue_uses_fifo_order(tmp_path):
+    """The 4 EARLIEST-added cards fill the first sheet; a 5th, later card is
+    the one left over -- not decided by name or insertion into sqlite."""
+    cat = _catalog(tmp_path)
+    for name in ["Card A", "Card B", "Card C", "Card D"]:
+        src = _card_image(tmp_path, name=name, color="red")
+        cat.catalog_card(name, "chocobo-deck", "chocobo-deck", src)
+        cat.add_to_queue("reprints", qty=1, name=name, variant_label="chocobo-deck")
+    # Added last -- must be the leftover, not one of the first 4.
+    src = _card_image(tmp_path, name="Card E", color="blue")
+    cat.catalog_card("Card E", "chocobo-deck", "chocobo-deck", src)
+    cat.add_to_queue("reprints", qty=1, name="Card E", variant_label="chocobo-deck")
+
+    cat.build_queue("reprints", tmp_path / "out")
+
+    remaining = cat.list_queue("reprints")
+    assert len(remaining) == 1
+    assert remaining[0][0].name == "Card E"
+
+
+def test_build_queue_does_not_touch_queue_items(tmp_path):
+    """Draining the queue happens at PRINT time, not build time -- build_queue
+    must leave queue_items alone so a halted/unprinted run can still resume."""
+    cat = _catalog(tmp_path)
+    _seed_queue(cat, tmp_path, [f"Card {i}" for i in range(4)])
+
+    cat.build_queue("reprints", tmp_path / "out")
+
+    remaining = cat.list_queue("reprints")
+    assert len(remaining) == 4
+
+
+def test_build_queue_records_sheet_contents_for_the_built_sheet(tmp_path):
+    cat = _catalog(tmp_path)
+    _seed_queue(cat, tmp_path, [f"Card {i}" for i in range(4)])
+
+    result = cat.build_queue("reprints", tmp_path / "out")
+
+    rows = cat.conn.execute(
+        "SELECT COUNT(*) AS n FROM sheet_contents WHERE deck_or_queue = 'reprints'"
+    ).fetchone()
+    assert rows["n"] == 4
+    assert result.sheets[0].name in {r["sheet_file"] for r in cat.conn.execute(
+        "SELECT DISTINCT sheet_file FROM sheet_contents"
+    ).fetchall()}
