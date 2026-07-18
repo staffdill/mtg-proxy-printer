@@ -12,7 +12,22 @@ venv/
 # Generated print sheets
 out/
 sheets/
+sheets-*/
 debug/
+
+# Local card/deck working folders (inputs, not source)
+cards/
+cards-*/
+chocobo-deck/
+masayoshi/
+one-piece/
+singles/
+finalchocobo/
+finalchocobo.zip
+
+# Scratch / downloads
+*.rar
+New Tab_files/
 
 # Card catalog (SQLite + owned images + print-history snapshots)
 catalog.db
