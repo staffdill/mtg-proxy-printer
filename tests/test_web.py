@@ -36,6 +36,12 @@ def _client(tmp_path, password="secret"):
     return app, app.test_client()
 
 
+def test_session_cookie_flags(tmp_path):
+    app = _app(tmp_path)
+    assert app.config.get("SESSION_COOKIE_HTTPONLY", True) is True
+    assert app.config.get("SESSION_COOKIE_SAMESITE", "Lax") in ("Lax", "lax")
+
+
 def test_create_app_rejects_empty_password(tmp_path):
     from mtgproxy.web import create_app
 

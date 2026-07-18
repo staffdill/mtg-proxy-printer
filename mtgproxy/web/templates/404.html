@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Not found — MTG Proxy Catalog{% endblock %}
+{% block content %}
+<h1>Page not found</h1>
+<p class="muted">That URL does not exist.</p>
+<p><a href="{{ url_for('main.search') }}">Back to search</a></p>
+{% endblock %}

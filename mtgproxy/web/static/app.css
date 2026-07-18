@@ -87,8 +87,25 @@ button:hover { filter: brightness(1.1); }
 }
 .card-meta a { color: var(--accent); }
 .add-form {
+  flex: 1 1 12rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+@media (max-width: 520px) {
+  .card-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .thumb {
+    width: 72px;
+    height: 100px;
+  }
+  .add-form {
+    width: 100%;
+  }
+  .add-form input[type="number"] {
+    width: 4rem;
+  }
 }

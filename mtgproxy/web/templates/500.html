@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Error — MTG Proxy Catalog{% endblock %}
+{% block content %}
+<h1>Something went wrong</h1>
+<p class="muted">An internal error occurred. Try again or check the server log.</p>
+<p><a href="{{ url_for('main.search') }}">Back to search</a></p>
+{% endblock %}

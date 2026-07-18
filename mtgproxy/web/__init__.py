@@ -4,7 +4,7 @@ from __future__ import annotations
 import atexit
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, render_template
 
 from mtgproxy.catalog import Catalog
 
@@ -17,6 +17,9 @@ def create_app(config: dict | None = None) -> Flask:
 
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["SECRET_KEY"] = cfg.get("SECRET_KEY") or "dev-only-change-me"
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # SESSION_COOKIE_SECURE left False — LAN is usually HTTP
 
     app.config["PASSWORD"] = password
     app.config["DB_PATH"] = Path(cfg.get("DB_PATH", "catalog.db"))
@@ -40,6 +43,14 @@ def create_app(config: dict | None = None) -> Flask:
             c.close()
 
     atexit.register(_shutdown)
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return render_template("404.html"), 404
+
+    @app.errorhandler(500)
+    def server_error(e):
+        return render_template("500.html"), 500
 
     # Blueprints registered in later tasks; for now register a stub login redirect.
     from mtgproxy.web.auth import auth_bp, login_required
